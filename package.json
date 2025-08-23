@@ -1,0 +1,23 @@
+{
+  "name": "mcpli",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Turn any MCP server into a first-class CLI tool",
+  "bin": {
+    "mcpli": "dist/mcpli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "postbuild": "chmod +x dist/mcpli.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
