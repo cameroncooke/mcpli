@@ -3,11 +3,21 @@
 /**
  * MCPLI - Turn any MCP server into a first-class CLI tool
  * 
- * This is a minimal working version to demonstrate the core concept.
+ * This version supports both stateless mode and long-lived daemon processes.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { DaemonClient } from './daemon/index.js';
+import { 
+  handleDaemonStart, 
+  handleDaemonStop, 
+  handleDaemonStatus, 
+  handleDaemonRestart,
+  handleDaemonLogs,
+  handleDaemonClean,
+  printDaemonHelp
+} from './daemon/index.js';
 
 interface GlobalOptions {
   help?: boolean;
@@ -16,17 +26,71 @@ interface GlobalOptions {
   debug?: boolean;
   logs?: boolean;
   timeout?: number;
+  daemon?: boolean;
+  force?: boolean;
 }
 
 function parseArgs(argv: string[]) {
   const args = argv.slice(2); // Remove node and script name
   const globals: GlobalOptions = { timeout: 30000 };
   
-  // Find the -- separator
+  // Check for daemon subcommand
+  if (args[0] === 'daemon') {
+    globals.daemon = true;
+    
+    // Check if help is requested for daemon
+    if (args[1] === '--help' || args[1] === '-h') {
+      globals.help = true;
+      return { 
+        globals, 
+        daemonCommand: '',
+        daemonArgs: [],
+        childCommand: '',
+        childArgs: [],
+        userArgs: []
+      };
+    }
+    
+    const daemonCommand = args[1];
+    const daemonArgs = args.slice(2);
+    
+    // Parse daemon-specific options
+    for (const arg of daemonArgs) {
+      if (arg === '--help' || arg === '-h') globals.help = true;
+      else if (arg === '--debug') globals.debug = true;
+      else if (arg === '--logs') globals.logs = true;
+      else if (arg === '--force') globals.force = true;
+      else if (arg.startsWith('--timeout=')) {
+        globals.timeout = parseInt(arg.split('=')[1], 10);
+      }
+    }
+    
+    return { 
+      globals, 
+      daemonCommand, 
+      daemonArgs,
+      childCommand: '',
+      childArgs: [],
+      userArgs: []
+    };
+  }
+  
+  // Regular tool execution mode - find the -- separator
   const dashIndex = args.indexOf('--');
   if (dashIndex === -1) {
+    // For help or when no command specified, allow missing --
+    if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+      return {
+        globals: { ...globals, help: true },
+        childCommand: '',
+        childArgs: [],
+        userArgs: args
+      };
+    }
+    
     console.error('Error: Child command required after --');
     console.error('Usage: mcpli [options] [tool] [params...] -- <command> [args...]');
+    console.error('       mcpli daemon <subcommand> [options]');
     process.exit(1);
   }
   
@@ -46,31 +110,63 @@ function parseArgs(argv: string[]) {
     else if (arg === '--raw') globals.raw = true;
     else if (arg === '--debug') globals.debug = true;
     else if (arg === '--logs') globals.logs = true;
+    else if (arg.startsWith('--timeout=')) {
+      globals.timeout = parseInt(arg.split('=')[1], 10);
+    }
   }
   
   return { globals, childCommand, childArgs, userArgs };
 }
 
 async function discoverTools(command: string, args: string[], options: GlobalOptions) {
-  const transport = new StdioClientTransport({
-    command,
-    args,
-    stderr: options.logs ? 'inherit' : 'ignore'  // Suppress by default, enable with --logs
-  });
-  
-  const client = new Client({
-    name: 'mcpli',
-    version: '1.0.0'
-  }, {
-    capabilities: {}
+  // Try daemon client first, with fallback to direct connection
+  const daemonClient = new DaemonClient(command, args, {
+    logs: options.logs,
+    debug: options.debug,
+    timeout: options.timeout,
+    autoStart: true,
+    fallbackToStateless: true
   });
   
   try {
-    await client.connect(transport);
-    const result = await client.listTools();
-    return { tools: result.tools || [], client, close: () => client.close() };
+    const result = await daemonClient.listTools();
+    return { 
+      tools: result.tools || [], 
+      daemonClient,
+      isDaemon: true,
+      close: () => Promise.resolve()
+    };
   } catch (error) {
-    throw new Error(`Failed to connect to MCP server: ${error instanceof Error ? error.message : error}`);
+    // Fallback to direct connection
+    if (options.debug) {
+      console.error('[DEBUG] Daemon failed, using direct connection:', error);
+    }
+    
+    const transport = new StdioClientTransport({
+      command,
+      args,
+      stderr: options.logs ? 'inherit' : 'ignore'
+    });
+    
+    const client = new Client({
+      name: 'mcpli',
+      version: '1.0.0'
+    }, {
+      capabilities: {}
+    });
+    
+    try {
+      await client.connect(transport);
+      const result = await client.listTools();
+      return { 
+        tools: result.tools || [], 
+        client, 
+        isDaemon: false,
+        close: () => client.close() 
+      };
+    } catch (error) {
+      throw new Error(`Failed to connect to MCP server: ${error instanceof Error ? error.message : error}`);
+    }
   }
 }
 
@@ -170,12 +266,22 @@ function printHelp(tools: any[]) {
   console.log('');
   console.log('Usage:');
   console.log('  mcpli [options] [--tool | tool] [params...] -- <command> [args...]');
+  console.log('  mcpli daemon <subcommand> [options]');
   console.log('');
   console.log('Global Options:');
   console.log('  --help, -h     Show this help');
   console.log('  --logs         Enable server log output (disabled by default)');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
+  console.log('  --timeout=<ms> Set daemon timeout (default: 30000)');
+  console.log('');
+  console.log('Daemon Commands:');
+  console.log('  daemon start   Start long-lived daemon process');
+  console.log('  daemon stop    Stop daemon process');
+  console.log('  daemon status  Show daemon status');
+  console.log('  daemon restart Restart daemon process');
+  console.log('  daemon logs    Show daemon logs');
+  console.log('  daemon clean   Clean up daemon files');
   console.log('');
   
   if (tools.length > 0) {
@@ -186,32 +292,143 @@ function printHelp(tools: any[]) {
       console.log(`  --${name.padEnd(20)} ${desc.slice(0, 50)}${desc.length > 50 ? '...' : ''}`);
     }
     console.log('');
-    console.log('Examples:');
+    console.log('Tool Examples:');
     console.log(`  mcpli --${tools[0].name.replace(/_/g, '-')} -- node server.js`);
     console.log(`  mcpli ${tools[0].name} param="value" -- node server.js`);
+    console.log('');
+    console.log('Daemon Examples:');
+    console.log('  mcpli daemon start -- node server.js');
+    console.log(`  mcpli --${tools[0].name.replace(/_/g, '-')}  # Fast execution via daemon`);
   } else {
     console.log('Examples:');
     console.log('  mcpli --help -- node server.js');
+    console.log('  mcpli daemon start -- node server.js');
   }
 }
 
 async function main() {
   try {
-    const { globals, childCommand, childArgs, userArgs } = parseArgs(process.argv);
+    const result = parseArgs(process.argv);
+    const { globals } = result;
     
     if (globals.debug) {
-      console.error('[DEBUG] Args:', { childCommand, childArgs, userArgs });
+      console.error('[DEBUG] Parsed args:', result);
+    }
+    
+    // Handle daemon subcommands
+    if (globals.daemon) {
+      const { daemonCommand, daemonArgs } = result as any;
+      
+      if (globals.help || !daemonCommand) {
+        printDaemonHelp();
+        return;
+      }
+      
+      const options = {
+        debug: globals.debug,
+        logs: globals.logs,
+        force: globals.force,
+        timeout: globals.timeout
+      };
+      
+      switch (daemonCommand) {
+        case 'start':
+          const dashIndex = daemonArgs.indexOf('--');
+          if (dashIndex === -1) {
+            console.error('Error: Command required after -- for daemon start');
+            console.error('Usage: mcpli daemon start -- <command> [args...]');
+            process.exit(1);
+          }
+          const command = daemonArgs[dashIndex + 1];
+          const args = daemonArgs.slice(dashIndex + 2);
+          if (!command) {
+            console.error('Error: Command required after --');
+            process.exit(1);
+          }
+          await handleDaemonStart(command, args, options);
+          break;
+          
+        case 'stop':
+          await handleDaemonStop(options);
+          break;
+          
+        case 'status':
+          await handleDaemonStatus(options);
+          break;
+          
+        case 'restart':
+          const restartDashIndex = daemonArgs.indexOf('--');
+          if (restartDashIndex === -1) {
+            console.error('Error: Command required after -- for daemon restart');
+            console.error('Usage: mcpli daemon restart -- <command> [args...]');
+            process.exit(1);
+          }
+          const restartCommand = daemonArgs[restartDashIndex + 1];
+          const restartArgs = daemonArgs.slice(restartDashIndex + 2);
+          if (!restartCommand) {
+            console.error('Error: Command required after --');
+            process.exit(1);
+          }
+          await handleDaemonRestart(restartCommand, restartArgs, options);
+          break;
+          
+        case 'logs':
+          await handleDaemonLogs(options);
+          break;
+          
+        case 'clean':
+          await handleDaemonClean(options);
+          break;
+          
+        default:
+          console.error(`Error: Unknown daemon command: ${daemonCommand}`);
+          console.error('Use "mcpli daemon --help" to see available commands');
+          process.exit(1);
+      }
+      
+      return;
+    }
+    
+    // Regular tool execution mode
+    const { childCommand, childArgs, userArgs } = result;
+    
+    if (!childCommand && !globals.help) {
+      console.error('Error: Command required after --');
+      console.error('Usage: mcpli [options] [tool] [params...] -- <command> [args...]');
+      process.exit(1);
+    }
+    
+    // Show help for regular mode
+    if (globals.help) {
+      if (childCommand) {
+        // Get tools to show in help
+        try {
+          const { tools, close } = await discoverTools(childCommand, childArgs, globals);
+          printHelp(tools);
+          await close();
+        } catch {
+          printHelp([]);
+        }
+      } else {
+        printHelp([]);
+      }
+      return;
+    }
+    
+    if (globals.debug) {
+      console.error('[DEBUG] Tool execution mode:', { childCommand, childArgs, userArgs });
     }
     
     // Discover tools
-    const { tools, client, close } = await discoverTools(childCommand, childArgs, globals);
+    const { tools, client, daemonClient, isDaemon, close } = await discoverTools(childCommand, childArgs, globals);
     
     if (globals.debug) {
       console.error('[DEBUG] Found tools:', tools.map((t: any) => t.name));
+      console.error('[DEBUG] Using daemon:', isDaemon);
     }
     
-    // Show help if requested or no tool specified
-    if (globals.help || userArgs.length === 0) {
+    // Show help if no tool specified
+    if (userArgs.length === 0) {
       printHelp(tools);
       await close();
       return;
@@ -237,19 +454,29 @@ async function main() {
       console.error('[DEBUG] Parameters:', params);
     }
     
-    // Execute tool
-    const result = await client.callTool({
-      name: selectedTool.name,
-      arguments: params
-    });
+    // Execute tool using appropriate client
+    let toolResult;
+    if (isDaemon && daemonClient) {
+      toolResult = await daemonClient.callTool({
+        name: selectedTool.name,
+        arguments: params
+      });
+    } else if (client) {
+      toolResult = await client.callTool({
+        name: selectedTool.name,
+        arguments: params
+      });
+    } else {
+      throw new Error('No client available for tool execution');
+    }
     
     await close();
     
     // Output result
     if (globals.raw) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(toolResult, null, 2));
     } else {
-      const extracted = extractContent(result);
+      const extracted = extractContent(toolResult);
       if (extracted !== null) {
         if (typeof extracted === 'string') {
           console.log(extracted);
