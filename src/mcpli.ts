@@ -103,9 +103,20 @@ function parseArgs(argv: string[]) {
     process.exit(1);
   }
   
-  // Parse global options
+  // Parse global options - but don't set help=true if there's a tool name before --help
+  let foundToolName = false;
   for (const arg of userArgs) {
-    if (arg === '--help' || arg === '-h') globals.help = true;
+    if (!arg.startsWith('--') && !arg.startsWith('-') && !foundToolName) {
+      foundToolName = true; // This might be a tool name
+      continue;
+    }
+    
+    if (arg === '--help' || arg === '-h') {
+      // Only set global help if no tool name was found
+      if (!foundToolName) {
+        globals.help = true;
+      }
+    }
     else if (arg === '--quiet' || arg === '-q') globals.quiet = true;
     else if (arg === '--raw') globals.raw = true;
     else if (arg === '--debug') globals.debug = true;
@@ -185,16 +196,11 @@ function findTool(userArgs: string[], tools: any[]) {
     toolMap.set(normalizeToolName(name), tool);
   }
   
-  // Look for tool selection
+  // Look for tool selection - first non-option argument is the tool name
   for (const arg of userArgs) {
-    if (arg.startsWith('--')) {
-      const toolName = arg.slice(2);
-      if (toolMap.has(toolName)) {
-        return toolMap.get(toolName);
-      }
-    } else if (!arg.includes('=')) {
+    if (!arg.startsWith('--') && !arg.startsWith('-')) {
       if (toolMap.has(arg)) {
-        return toolMap.get(arg);
+        return { tool: toolMap.get(arg), toolName: arg };
       }
     }
   }
@@ -202,29 +208,66 @@ function findTool(userArgs: string[], tools: any[]) {
   return null;
 }
 
-function parseParams(userArgs: string[], selectedTool: any) {
+function parseParams(userArgs: string[], selectedTool: any, toolName: string) {
   const params: Record<string, any> = {};
-  const toolName = selectedTool?.name;
+  let foundTool = false;
   
-  for (const arg of userArgs) {
-    // Skip tool selection
-    if (arg === toolName || arg === `--${toolName}` || arg === `--${toolName.replace(/_/g, '-')}`) {
+  for (let i = 0; i < userArgs.length; i++) {
+    const arg = userArgs[i];
+    
+    // Skip until we find the tool name
+    if (arg === toolName) {
+      foundTool = true;
       continue;
     }
     
-    if (arg.includes('=')) {
-      const [key, value] = arg.split('=', 2);
-      const cleanKey = key.replace(/^--/, '');
+    // Only process arguments after the tool name
+    if (!foundTool) continue;
+    
+    // Handle --flag value pairs
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const nextArg = userArgs[i + 1];
       
-      // Try to parse as JSON, fall back to string
-      try {
-        if (value.startsWith('[') || value.startsWith('{') || value === 'true' || value === 'false' || !isNaN(Number(value))) {
-          params[cleanKey] = JSON.parse(value);
-        } else {
-          params[cleanKey] = value;
+      // If next argument exists and doesn't start with --, it's the value
+      if (nextArg && !nextArg.startsWith('-')) {
+        // Try to parse as JSON, fall back to string
+        try {
+          if (nextArg.startsWith('[') || nextArg.startsWith('{') || 
+              nextArg === 'true' || nextArg === 'false' || 
+              !isNaN(Number(nextArg))) {
+            params[key] = JSON.parse(nextArg);
+          } else {
+            params[key] = nextArg;
+          }
+        } catch {
+          params[key] = nextArg;
         }
-      } catch {
-        params[cleanKey] = value;
+        i++; // Skip the value argument
+      } else {
+        // Boolean flag
+        params[key] = true;
+      }
+    } else if (arg.startsWith('-') && arg.length === 2) {
+      // Handle single letter flags like -f
+      const key = arg.slice(1);
+      const nextArg = userArgs[i + 1];
+      
+      if (nextArg && !nextArg.startsWith('-')) {
+        try {
+          if (nextArg.startsWith('[') || nextArg.startsWith('{') || 
+              nextArg === 'true' || nextArg === 'false' || 
+              !isNaN(Number(nextArg))) {
+            params[key] = JSON.parse(nextArg);
+          } else {
+            params[key] = nextArg;
+          }
+        } catch {
+          params[key] = nextArg;
+        }
+        i++; // Skip the value argument
+      } else {
+        params[key] = true;
       }
     }
   }
@@ -261,11 +304,17 @@ function extractContent(result: any): any {
   });
 }
 
-function printHelp(tools: any[]) {
+function printHelp(tools: any[], specificTool?: any) {
+  if (specificTool) {
+    printToolHelp(specificTool);
+    return;
+  }
+  
   console.log('MCPLI - Turn any MCP server into a first-class CLI tool');
   console.log('');
   console.log('Usage:');
-  console.log('  mcpli [options] [--tool | tool] [params...] -- <command> [args...]');
+  console.log('  mcpli <tool> [tool-options...] -- <mcp-server-command> [args...]');
+  console.log('  mcpli <tool> --help -- <mcp-server-command> [args...]');
   console.log('  mcpli daemon <subcommand> [options]');
   console.log('');
   console.log('Global Options:');
@@ -289,20 +338,67 @@ function printHelp(tools: any[]) {
     for (const tool of tools) {
       const name = tool.name.replace(/_/g, '-');
       const desc = tool.description || 'No description';
-      console.log(`  --${name.padEnd(20)} ${desc.slice(0, 50)}${desc.length > 50 ? '...' : ''}`);
+      console.log(`  ${name.padEnd(20)} ${desc.slice(0, 50)}${desc.length > 50 ? '...' : ''}`);
     }
     console.log('');
     console.log('Tool Examples:');
-    console.log(`  mcpli --${tools[0].name.replace(/_/g, '-')} -- node server.js`);
-    console.log(`  mcpli ${tools[0].name} param="value" -- node server.js`);
+    console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --help -- node server.js`);
+    console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value -- node server.js`);
     console.log('');
     console.log('Daemon Examples:');
     console.log('  mcpli daemon start -- node server.js');
-    console.log(`  mcpli --${tools[0].name.replace(/_/g, '-')}  # Fast execution via daemon`);
+    console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value  # Fast execution via daemon`);
   } else {
     console.log('Examples:');
     console.log('  mcpli --help -- node server.js');
     console.log('  mcpli daemon start -- node server.js');
+  }
+}
+
+function printToolHelp(tool: any) {
+  console.log(`MCPLI Tool: ${tool.name}`);
+  console.log('');
+  if (tool.description) {
+    console.log(`Description: ${tool.description}`);
+    console.log('');
+  }
+  
+  console.log(`Usage: mcpli ${tool.name} [options] -- <mcp-server-command> [args...]`);
+  console.log('');
+  
+  if (tool.inputSchema && tool.inputSchema.properties) {
+    console.log('Options:');
+    const properties = tool.inputSchema.properties;
+    const required = tool.inputSchema.required || [];
+    
+    for (const [propName, propSchema] of Object.entries(properties)) {
+      const schema = propSchema as any;
+      const isRequired = required.includes(propName);
+      const type = schema.type || 'string';
+      const description = schema.description || '';
+      const defaultValue = schema.default;
+      
+      let line = `  --${propName.padEnd(20)}`;
+      if (type) line += ` (${type})`;
+      if (isRequired) line += ' [required]';
+      if (description) line += ` ${description}`;
+      if (defaultValue !== undefined) line += ` (default: ${JSON.stringify(defaultValue)})`;
+      
+      console.log(line);
+    }
+    console.log('');
+  }
+  
+  console.log('Examples:');
+  const exampleName = tool.name.replace(/_/g, '-');
+  console.log(`  mcpli ${exampleName} --help -- node server.js`);
+  
+  if (tool.inputSchema && tool.inputSchema.properties) {
+    const properties = Object.keys(tool.inputSchema.properties);
+    if (properties.length > 0) {
+      const firstProp = properties[0];
+      console.log(`  mcpli ${exampleName} --${firstProp} "example-value" -- node server.js`);
+    }
   }
 }
 
@@ -435,34 +531,46 @@ async function main() {
     }
     
     // Find selected tool
-    const selectedTool = findTool(userArgs, tools);
-    if (!selectedTool) {
+    const toolResult = findTool(userArgs, tools);
+    if (!toolResult) {
       console.error('Error: No tool specified or tool not found');
-      console.error('Use --help to see available tools');
+      console.error('Available tools:', tools.map((t: any) => t.name.replace(/_/g, '-')).join(', '));
+      console.error('Use --help to see all available tools');
       await close();
       process.exit(1);
     }
     
+    const { tool: selectedTool, toolName } = toolResult;
+    
+    // Check for tool-specific help
+    const hasHelp = userArgs.some((arg: string) => arg === '--help' || arg === '-h');
+    if (hasHelp) {
+      printHelp(tools, selectedTool);
+      await close();
+      return;
+    }
+    
     if (globals.debug) {
       console.error('[DEBUG] Selected tool:', selectedTool.name);
+      console.error('[DEBUG] Tool name used:', toolName);
     }
     
     // Parse parameters
-    const params = parseParams(userArgs, selectedTool);
+    const params = parseParams(userArgs, selectedTool, toolName);
     
     if (globals.debug) {
       console.error('[DEBUG] Parameters:', params);
     }
     
     // Execute tool using appropriate client
-    let toolResult;
+    let executionResult;
     if (isDaemon && daemonClient) {
-      toolResult = await daemonClient.callTool({
+      executionResult = await daemonClient.callTool({
         name: selectedTool.name,
         arguments: params
       });
     } else if (client) {
-      toolResult = await client.callTool({
+      executionResult = await client.callTool({
         name: selectedTool.name,
         arguments: params
       });
@@ -474,9 +582,9 @@ async function main() {
     
     // Output result
     if (globals.raw) {
-      console.log(JSON.stringify(toolResult, null, 2));
+      console.log(JSON.stringify(executionResult, null, 2));
     } else {
-      const extracted = extractContent(toolResult);
+      const extracted = extractContent(executionResult);
       if (extracted !== null) {
         if (typeof extracted === 'string') {
           console.log(extracted);
