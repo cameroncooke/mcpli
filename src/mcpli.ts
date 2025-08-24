@@ -25,6 +25,7 @@ interface GlobalOptions {
   raw?: boolean;
   debug?: boolean;
   logs?: boolean;
+  verbose?: boolean;
   timeout?: number;
   daemon?: boolean;
   force?: boolean;
@@ -59,6 +60,7 @@ function parseArgs(argv: string[]) {
       if (arg === '--help' || arg === '-h') globals.help = true;
       else if (arg === '--debug') globals.debug = true;
       else if (arg === '--logs') globals.logs = true;
+      else if (arg === '--verbose') globals.verbose = true;
       else if (arg === '--force') globals.force = true;
       else if (arg.startsWith('--timeout=')) {
         globals.timeout = parseInt(arg.split('=')[1], 10);
@@ -121,6 +123,7 @@ function parseArgs(argv: string[]) {
     else if (arg === '--raw') globals.raw = true;
     else if (arg === '--debug') globals.debug = true;
     else if (arg === '--logs') globals.logs = true;
+    else if (arg === '--verbose') globals.verbose = true;
     else if (arg.startsWith('--timeout=')) {
       globals.timeout = parseInt(arg.split('=')[1], 10);
     }
@@ -132,7 +135,7 @@ function parseArgs(argv: string[]) {
 async function discoverTools(command: string, args: string[], options: GlobalOptions) {
   // Try daemon client first, with fallback to direct connection
   const daemonClient = new DaemonClient(command, args, {
-    logs: options.logs,
+    logs: options.logs || options.verbose,
     debug: options.debug,
     timeout: options.timeout,
     autoStart: true,
@@ -156,7 +159,7 @@ async function discoverTools(command: string, args: string[], options: GlobalOpt
     const transport = new StdioClientTransport({
       command,
       args,
-      stderr: options.logs ? 'inherit' : 'ignore'
+      stderr: (options.logs || options.verbose) ? 'inherit' : 'ignore'
     });
     
     const client = new Client({
@@ -320,7 +323,7 @@ function printHelp(tools: any[], specificTool?: any) {
   console.log('');
   console.log('Global Options:');
   console.log('  --help, -h     Show this help and list all available tools');
-  console.log('  --logs         Enable server log output (disabled by default)');
+  console.log('  --verbose      Show MCP server output (stderr/logs)');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
   console.log('  --timeout=<ms> Set daemon timeout (default: 30000)');
@@ -427,7 +430,7 @@ async function main() {
       
       const options = {
         debug: globals.debug,
-        logs: globals.logs,
+        logs: globals.logs || globals.verbose,
         force: globals.force,
         timeout: globals.timeout
       };
