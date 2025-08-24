@@ -315,10 +315,11 @@ function printHelp(tools: any[], specificTool?: any) {
   console.log('Usage:');
   console.log('  mcpli <tool> [tool-options...] -- <mcp-server-command> [args...]');
   console.log('  mcpli <tool> --help -- <mcp-server-command> [args...]');
+  console.log('  mcpli --help -- <mcp-server-command> [args...]');
   console.log('  mcpli daemon <subcommand> [options]');
   console.log('');
   console.log('Global Options:');
-  console.log('  --help, -h     Show this help');
+  console.log('  --help, -h     Show this help and list all available tools');
   console.log('  --logs         Enable server log output (disabled by default)');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
@@ -338,20 +339,24 @@ function printHelp(tools: any[], specificTool?: any) {
     for (const tool of tools) {
       const name = tool.name.replace(/_/g, '-');
       const desc = tool.description || 'No description';
-      console.log(`  ${name.padEnd(20)} ${desc.slice(0, 50)}${desc.length > 50 ? '...' : ''}`);
+      console.log(`  ${name.padEnd(20)} ${desc.slice(0, 60)}${desc.length > 60 ? '...' : ''}`);
     }
     console.log('');
-    console.log('Tool Examples:');
+    console.log('Tool Help:');
+    console.log(`  mcpli <tool> --help -- <mcp-server-command>    Show detailed help for specific tool`);
+    console.log('');
+    console.log('Examples:');
     console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --help -- node server.js`);
     console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value -- node server.js`);
     console.log('');
-    console.log('Daemon Examples:');
-    console.log('  mcpli daemon start -- node server.js');
-    console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value  # Fast execution via daemon`);
+    console.log('Fast Execution (via auto-daemon):');
+    console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value  # No MCP server command needed after first use`);
   } else {
+    console.log('No tools found. The MCP server may not be responding correctly.');
+    console.log('');
     console.log('Examples:');
-    console.log('  mcpli --help -- node server.js');
-    console.log('  mcpli daemon start -- node server.js');
+    console.log('  mcpli --help -- node server.js       # Show tools from server.js');
+    console.log('  mcpli daemon start -- node server.js # Start long-lived daemon');
   }
 }
 
@@ -497,16 +502,21 @@ async function main() {
     // Show help for regular mode
     if (globals.help) {
       if (childCommand) {
-        // Get tools to show in help
+        // Get tools to show in help - always discover tools for root help
         try {
           const { tools, close } = await discoverTools(childCommand, childArgs, globals);
           printHelp(tools);
           await close();
-        } catch {
+        } catch (error) {
+          console.error(`Error connecting to MCP server: ${error instanceof Error ? error.message : error}`);
+          console.error('Cannot show available tools. Please check your MCP server command.');
           printHelp([]);
         }
       } else {
-        printHelp([]);
+        console.error('Error: MCP server command required to show available tools');
+        console.error('Usage: mcpli --help -- <mcp-server-command> [args...]');
+        console.error('Example: mcpli --help -- node server.js');
+        process.exit(1);
       }
       return;
     }
