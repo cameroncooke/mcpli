@@ -2,13 +2,37 @@
   "name": "mcpli",
   "version": "1.0.0",
   "type": "module",
-  "description": "Turn any MCP server into a first-class CLI tool",
+  "description": "Transform stdio-based MCP servers into a first‑class CLI tool",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "cli",
+    "tools",
+    "agent",
+    "command-line"
+  ],
+  "author": "Cameron Cooke",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cameroncooke/mcpli.git"
+  },
+  "homepage": "https://github.com/cameroncooke/mcpli",
+  "bugs": {
+    "url": "https://github.com/cameroncooke/mcpli/issues"
+  },
   "bin": {
     "mcpli": "dist/mcpli.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc && cp src/daemon/wrapper.js dist/daemon/wrapper.js",
-    "postbuild": "chmod +x dist/mcpli.js"
+    "postbuild": "chmod +x dist/mcpli.js",
+    "dev": "npm run build && npm run postbuild",
+    "lint": "echo 'Lint step - add ESLint when needed'",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.3",

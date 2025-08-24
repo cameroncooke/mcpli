@@ -3,26 +3,57 @@
 MCPLI turns any MCP server into a first‑class CLI tool with a fast, seamless experience. It supports both stateless one‑off execution and long‑lived daemon processes that auto‑start when a server command is provided and are reused across invocations. This document explains the architecture and how each part works together with an emphasis on environment‑aware daemon isolation and current function signatures.
 
 Contents:
-- Overall Architecture
-- Configuration System
-- CommandSpec and Environment Handling
-- Parameter Parsing and Validation
-- Daemon Architecture with Env‑Aware Isolation
-- Timeout Management
-- MCP Forwarding via Daemon Wrapper
-- Process Lifecycle
-- IPC Communication
-- File System Structure and State Persistence
-- Automatic Startup and Fallbacks
-- Help System and Tool Discovery
-- Error Handling and Recovery
-- Cross-Platform Considerations
-- Key Components and Code References
-- Example: End‑to‑End Sequence
-- Operational Considerations
-- Performance and Resource Management
-- Security Considerations
-- Appendix: Core APIs (comprehensive signatures)
+- [1) Overall Architecture](#1-overall-architecture)
+- [2) Configuration System](#2-configuration-system)
+  - [Configuration Priority (highest to lowest):](#configuration-priority-highest-to-lowest)
+  - [Available Configuration:](#available-configuration)
+  - [Environment Variables:](#environment-variables)
+  - [Configuration Functions:](#configuration-functions)
+  - [Usage Examples:](#usage-examples)
+- [3) CommandSpec and Environment Handling](#3-commandspec-and-environment-handling)
+- [4) Parameter Parsing and Validation](#4-parameter-parsing-and-validation)
+  - [Parameter Types Supported:](#parameter-types-supported)
+  - [Parsing Logic (parseParams in src/mcpli.ts):](#parsing-logic-parseparams-in-srcmcplits)
+  - [Critical Bug Fix:](#critical-bug-fix)
+  - [Validation Features:](#validation-features)
+- [5) Daemon Architecture with Env‑Aware Isolation](#5-daemon-architecture-with-envaware-isolation)
+- [6) Timeout Management](#6-timeout-management)
+  - [1. Daemon Inactivity Timeout](#1-daemon-inactivity-timeout)
+  - [2. IPC Connection Timeout](#2-ipc-connection-timeout)
+  - [3. CLI Operation Timeout](#3-cli-operation-timeout)
+  - [Timeout Conversion and Units:](#timeout-conversion-and-units)
+  - [Timeout Reset Mechanism:](#timeout-reset-mechanism)
+- [7) MCP Forwarding via Daemon Wrapper](#7-mcp-forwarding-via-daemon-wrapper)
+- [8) Process Lifecycle](#8-process-lifecycle)
+- [9) IPC Communication](#9-ipc-communication)
+- [10) File System Structure and State Persistence](#10-file-system-structure-and-state-persistence)
+  - [Directory Structure:](#directory-structure)
+  - [Lock File Format (DaemonInfo):](#lock-file-format-daemoninfo)
+  - [State Persistence Features:](#state-persistence-features)
+  - [State Management Functions:](#state-management-functions)
+  - [Cross-Platform Considerations:](#cross-platform-considerations)
+  - [Legacy Compatibility:](#legacy-compatibility)
+- [11) Automatic Startup and Fallbacks](#11-automatic-startup-and-fallbacks)
+- [12) Help System and Tool Discovery](#12-help-system-and-tool-discovery)
+  - [Help Generation Strategy:](#help-generation-strategy)
+  - [Help Types:](#help-types)
+  - [Help Prioritization:](#help-prioritization)
+  - [Context-Aware Examples:](#context-aware-examples)
+  - [Help Implementation:](#help-implementation)
+- [13) Error Handling and Recovery](#13-error-handling-and-recovery)
+  - [Error Categories:](#error-categories)
+  - [Recovery Strategies:](#recovery-strategies)
+  - [Error Message Quality:](#error-message-quality)
+- [14) Cross-Platform Considerations](#14-cross-platform-considerations)
+  - [Path Normalization:](#path-normalization)
+  - [Environment Variable Handling:](#environment-variable-handling)
+  - [Process Management:](#process-management)
+  - [File System:](#file-system)
+- [15) Key Components and Code References](#15-key-components-and-code-references)
+- [Example: End‑to‑End Sequence (Env‑Aware Daemon ID)](#example-endtoend-sequence-envaware-daemon-id)
+- [Operational Considerations](#operational-considerations)
+- [Appendix: Core APIs (selected signatures)](#appendix-core-apis-selected-signatures)
+
 
 
 ## 1) Overall Architecture
@@ -160,7 +191,7 @@ MCPLI provides comprehensive JSON Schema-aware parameter parsing that handles al
    ```ts
    // Uses tool's inputSchema to determine expected types
    const propSchema = schema[key];
-   
+
    if (propSchema.type === 'boolean') {
      // Handle flag form or explicit true/false strings
    } else if (propSchema.type === 'number' || propSchema.type === 'integer') {
@@ -232,7 +263,7 @@ MCPLI implements a sophisticated timeout system with three distinct timeout cate
 ### 1. Daemon Inactivity Timeout
 **Purpose**: Automatic resource cleanup - shuts down idle daemons
 **Default**: 1800 seconds (30 minutes)
-**Configurable via**: 
+**Configurable via**:
 - CLI: `--timeout=3600`
 - Environment: `MCPLI_DEFAULT_TIMEOUT=3600`
 - Config: `resolveDaemonTimeout()`
@@ -248,7 +279,7 @@ resetInactivityTimer() {
   if (this.inactivityTimeout) {
     clearTimeout(this.inactivityTimeout);
   }
-  
+
   this.inactivityTimeout = setTimeout(() => {
     this.gracefulShutdown();
   }, this.timeoutMs);
@@ -289,7 +320,7 @@ Every daemon request resets the inactivity timer:
 ```js
 async handleIPCRequest(request) {
   this.resetInactivityTimer();  // First thing - reset timer
-  
+
   // Handle request...
 }
 ```
@@ -640,15 +671,15 @@ function normalizeCommand(command: string, args?: string[]): {
 } {
   // Resolve to absolute path
   const resolvedCommand = path.resolve(command);
-  
+
   // Platform-specific normalization
   const normalizedCommand = process.platform === 'win32'
     ? resolvedCommand.toLowerCase().replace(/\\/g, '/')
     : resolvedCommand;
-    
+
   // Normalize args similarly
   const normalizedArgs = args?.map(arg => /* normalize arg */) || [];
-  
+
   return { command: normalizedCommand, args: normalizedArgs };
 }
 ```

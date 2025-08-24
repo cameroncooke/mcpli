@@ -24,6 +24,7 @@ MCPLI turns any stdio-based MCP server into a discoverable, script‑friendly, a
   - [Environment Variables](#environment-variables)
   - [Debugging](#debugging)
 - [Tool Parameter Syntax](#tool-parameter-syntax)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Quick Start
@@ -320,6 +321,17 @@ Available environment variables:
 - Objects: `--config='{"timeout":5000}'`
 
 Both `--key value` and `--key=value` work for all types.
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- Setting up the development environment
+- Understanding the codebase architecture
+- Making changes and submitting pull requests
+- Code quality standards and testing guidelines
+
+Whether you're fixing bugs, adding features, improving documentation, or enhancing performance, your contributions help make MCPLI better for everyone.
 
 ## License
 
