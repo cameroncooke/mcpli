@@ -54,7 +54,26 @@ mcpli get-weather --location "San Francisco" -- node weather-server.js
 
 ## Why MCPLI?
 
-TBC
+MCP gives us a standard way for agents to talk to tools. But at scale it hits a hard limit: context and composability. Each MCP server brings tool descriptions, schemas, and metadata that the agent needs to ingest. Install a few servers with dozens of tools and you're burning tens of thousands of tokens before you've processed a single user prompt. That cost isn't just financial—it steals headroom for reasoning and hurts reliability.
+
+This creates a false choice for developers:
+- Use MCP "as intended" and accept huge, inference‑time context overhead and limited shell‑level composition.
+- Abandon MCP and wrap CLI tools instead, curating concise AGENTS.md examples that are efficient, predictable, and composable—but give up MCP's standardisation.
+
+MCPLI bridges that gap. It turns any stdio‑based MCP server into a first‑class CLI tool, so you get:
+- The best of both worlds: keep your MCP servers and their capability model, but exercise them as predictable CLI commands.
+- Composability by default: pipe results to jq, grep, awk, curl, or anything else your workflow demands.
+- Control over context: stop auto‑injecting large tool schemas; instead provide tight, example‑driven prompts just like you would for any other CLI.
+- Standard help and discoverability: mcpli auto‑generates tool help from MCP schemas, so your CLI stays self‑documenting and consistent.
+- Preservation of existing investments: no server changes required—MCPLI instantly upgrades what you already have.
+
+What changes in practice
+- Your agent no longer has to ingest every tool schema up front. You feed it small, curated examples: `mcpli get-weather --location 'NYC' -- node weather-server.js`.
+- You regain the shell: `mcpli get-weather ... | jq .temperature` is now trivial and reliable.
+- You keep state and speed with a persistent daemon behind the scenes, but you interact through a simple, composable CLI surface.
+
+Bottom line
+MCPLI doesn't replace MCP. It completes it. Keep the standard, ditch the token bloat, and gain the composability and predictability of the command line without rewriting your servers or your workflows.
 
 ## Installation
 
