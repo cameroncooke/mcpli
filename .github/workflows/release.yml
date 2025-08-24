@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Test version (e.g., 1.0.1-test)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Clear npm cache and install dependencies
+        run: |
+          npm cache clean --force
+          rm -rf node_modules package-lock.json
+          npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      # Note: Add test step once tests are implemented
+      # - name: Run tests
+      #   run: npm test
+
+      - name: Get version from tag or input
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_TEST=true" >> $GITHUB_OUTPUT
+            echo "📝 Test version: $VERSION"
+            # Update package.json version for test releases only
+            npm version $VERSION --no-git-tag-version
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_TEST=false" >> $GITHUB_OUTPUT
+            echo "🚀 Release version: $VERSION"
+            # For tag-based releases, package.json was already updated by release script
+          fi
+
+      - name: Create package
+        run: npm pack
+
+      - name: Test publish (dry run for manual triggers)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "🧪 Testing package creation (dry run)"
+          npm publish --dry-run --access public
+
+      - name: Publish to NPM (production releases only)
+        if: github.event_name == 'push'
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          # Determine the appropriate npm tag based on version
+          if [[ "$VERSION" == *"-beta"* ]]; then
+            NPM_TAG="beta"
+          elif [[ "$VERSION" == *"-alpha"* ]]; then
+            NPM_TAG="alpha"
+          elif [[ "$VERSION" == *"-rc"* ]]; then
+            NPM_TAG="rc"
+          else
+            # For stable releases, explicitly use latest tag
+            NPM_TAG="latest"
+          fi
+          echo "📦 Publishing to NPM with tag: $NPM_TAG"
+          npm publish --access public --tag "$NPM_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release (production releases only)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Release v${{ steps.get_version.outputs.VERSION }}
+            
+            Transform any stdio-based MCP server into a first‑class CLI tool.
+            
+            ### Features
+            - Zero setup – Point at any MCP server, get instant CLI access
+            - Persistent daemon for stateful operations
+            - Natural CLI syntax with auto-generated help
+            - Standard shell composition with pipes and output redirection
+            - Flexible parameter syntax supporting all MCP data types
+            
+            ### Installation
+            ```bash
+            npm install -g mcpli@${{ steps.get_version.outputs.VERSION }}
+            ```
+            
+            Or use with npx:
+            ```bash
+            npx mcpli@${{ steps.get_version.outputs.VERSION }} <tool> -- <mcp-server-command>
+            ```
+            
+            📦 **NPM Package**: https://www.npmjs.com/package/mcpli/v/${{ steps.get_version.outputs.VERSION }}
+            
+            ### What's New
+            - Browse the [changelog](https://github.com/cameroncooke/mcpli/blob/main/CHANGELOG.md) for detailed changes
+            - Full MCP server compatibility with stdio transport
+            - Enhanced CLI ergonomics and discoverability
+          files: |
+            mcpli-${{ steps.get_version.outputs.VERSION }}.tgz
+          draft: false
+          prerelease: false
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.get_version.outputs.IS_TEST }}" = "true" ]; then
+            echo "🧪 Test completed for version: ${{ steps.get_version.outputs.VERSION }}"
+            echo "Ready for production release!"
+          else
+            echo "🎉 Production release completed!"
+            echo "Version: ${{ steps.get_version.outputs.VERSION }}"
+            echo "📦 NPM: https://www.npmjs.com/package/mcpli/v/${{ steps.get_version.outputs.VERSION }}"
+          fi
