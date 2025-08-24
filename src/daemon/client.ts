@@ -1,4 +1,4 @@
-import { isDaemonRunning, getDaemonInfo, updateLastAccess } from './lock.js';
+import { isDaemonRunning, getDaemonInfo, updateLastAccess, generateDaemonIdWithEnv } from './lock.js';
 import { sendIPCRequest, generateRequestId, testIPCConnection } from './ipc.js';
 import { startDaemon, DaemonOptions } from './spawn.js';
 
@@ -8,6 +8,8 @@ export interface DaemonClientOptions extends DaemonOptions {
 }
 
 export class DaemonClient {
+  private daemonId?: string;
+
   constructor(
     private command: string,
     private args: string[],
@@ -18,6 +20,11 @@ export class DaemonClient {
       fallbackToStateless: true,
       ...options
     };
+
+    // Compute daemonId only when we have a command (daemon discovery mode may not provide one)
+    if (this.command && this.command.trim()) {
+      this.daemonId = generateDaemonIdWithEnv(this.command, this.args, this.options.env || {});
+    }
   }
   
   async listTools(): Promise<any> {
@@ -53,22 +60,22 @@ export class DaemonClient {
   private async callDaemon(method: string, params?: any): Promise<any> {
     const cwd = this.options.cwd || process.cwd();
     
-    // Check if daemon is running
-    const isRunning = await isDaemonRunning(cwd);
+    // Check if daemon is running (for this specific daemonId, if any)
+    const isRunning = await isDaemonRunning(cwd, this.daemonId);
     
     if (!isRunning) {
-      if (this.options.autoStart) {
+      if (this.options.autoStart && this.command) {
         if (this.options.debug) {
           console.error('[DEBUG] Starting daemon automatically');
         }
         await this.startDaemon();
       } else {
-        throw new Error('Daemon not running and auto-start disabled');
+        throw new Error(this.command ? 'Daemon not running and auto-start disabled' : 'No daemon running and no server command provided');
       }
     }
     
     // Get daemon info
-    const daemonInfo = await getDaemonInfo(cwd);
+    const daemonInfo = await getDaemonInfo(cwd, this.daemonId);
     if (!daemonInfo) {
       throw new Error('Daemon info not available');
     }
@@ -88,14 +95,14 @@ export class DaemonClient {
     const result = await sendIPCRequest(daemonInfo.socket, request);
     
     // Update last access time
-    await updateLastAccess(cwd);
+    await updateLastAccess(cwd, this.daemonId);
     
     return result;
   }
   
   private async startDaemon(): Promise<void> {
     try {
-      const daemon = await startDaemon(this.command, this.args, this.options);
+      await startDaemon(this.command, this.args, { ...this.options, daemonId: this.daemonId });
       
       // Wait a moment for daemon to be fully ready
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -115,9 +122,14 @@ export class DaemonClient {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     
+    const safeEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([, v]) => v !== undefined)
+    ) as Record<string, string>;
+    
     const transport = new StdioClientTransport({
       command: this.command,
       args: this.args,
+      env: this.options.env ? { ...safeEnv, ...this.options.env } : undefined,
       stderr: this.options.logs ? 'inherit' : 'ignore'
     });
     
@@ -143,9 +155,14 @@ export class DaemonClient {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     
+    const safeEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([, v]) => v !== undefined)
+    ) as Record<string, string>;
+    
     const transport = new StdioClientTransport({
       command: this.command,
       args: this.args,
+      env: this.options.env ? { ...safeEnv, ...this.options.env } : undefined,
       stderr: this.options.logs ? 'inherit' : 'ignore'
     });
     

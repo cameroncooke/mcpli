@@ -1,8 +1,30 @@
 # MCPLI
 
-**Transform any MCP server into a first-class CLI tool with an ergonomic CLI.**
+Transform stdio-based MCP servers into a first‑class CLI tool.
 
-MCPLI (Model Context Protocol CLI) dynamically discovers tools from MCP servers and generates first-class command-line interfaces automatically. No configuration needed - just point it at any MCP server and get instant CLI access to all its tools.
+MCPLI turns any stdio-based MCP server into a discoverable, script‑friendly, agent-friendly CLI. Run tools as natural commands, compose the output using standard bash tools.
+
+## Table of contents
+
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Why MCPLI?](#why-mcpli)
+- [Installation](#installation)
+  - [Requirements](#requirements)
+  - [Global Installation](#global-installation)
+  - [Direct Usage (No Installation)](#direct-usage-no-installation)
+- [Usage](#usage)
+  - [Discover and Run Tools](#discover-and-run-tools)
+  - [Output Modes](#output-modes)
+  - [Examples](#examples)
+- [Advanced Features](#advanced-features)
+  - [Process Management](#process-management)
+    - [Multiple Daemons](#multiple-daemons)
+    - [Daemon Timeouts](#daemon-timeouts)
+  - [Environment Variables](#environment-variables)
+  - [Debugging](#debugging)
+- [Tool Parameter Syntax](#tool-parameter-syntax)
+- [License](#license)
 
 ## Quick Start
 
@@ -10,21 +32,36 @@ MCPLI (Model Context Protocol CLI) dynamically discovers tools from MCP servers 
 # Install globally via npm
 npm install -g mcpli
 
-# Or run directly with npx
-npx mcpli --help -- node your-mcp-server.js
+# View help
+mcpli --help -- node weather-server.js
+
+# View tool help
+mcpli get-weather --help -- node weather-server.js
+
+# Run a tool
+mcpli get-weather --location "San Francisco" -- node weather-server.js
 ```
 
 ## Features
 
-- 🚀 **Zero Configuration** - Point at any MCP server, get instant CLI
-- 🧠 **Dynamic Discovery** - Automatically finds all available tools
-- 🎯 **Perfect Ergonomics** - Natural CLI syntax that feels familiar
-- 📖 **Auto-Generated Help** - Detailed help for every tool and parameter
-- ⚡ **High Performance** - Optional daemon mode for 100-1000x speedup
-- 🔧 **Composable Output** - Clean JSON output perfect for piping
-- 🛠️ **Type-Aware** - Automatic parameter type inference and validation
+- Zero setup – Point at any stdio-based MCP server, get instant CLI access
+- Maintains a persistent daemon to ensure MCP is stateful and same instance is reused for repeated calls
+- Natural syntax – Tools become commands: `mcpli get-weather --location "NYC" -- node weather-server.js`
+- Auto‑generated help – `mcpli --help -- <server>` lists tools; `mcpli <tool> --help -- <server>` shows parameters
+- Clean output – Structured JSON that’s great for shell pipelines
+- Flexible parameters – Supports `--key value` and `--key=value`, plus JSON for arrays/objects
+
+
+## Why MCPLI?
+
+TBC
 
 ## Installation
+
+### Requirements
+
+- Node.js 18+
+- Any MCP‑compliant server that uses stdio-based transport
 
 ### Global Installation
 ```bash
@@ -33,216 +70,238 @@ npm install -g mcpli
 
 ### Direct Usage (No Installation)
 ```bash
-npx mcpli <command>
+npx mcpli@latest <tool-command> -- <mcp-server-command> [args...]
 ```
 
 ## Usage
 
-### Basic Syntax
+Always include the MCP server command after -- on every invocation. MCPLI does the rest for you.
+
+### Discover and Run Tools
+
+View tools:
+
 ```bash
-mcpli <tool> [tool-options...] -- <mcp-server> [args...]
+mcpli --help -- <mcp-server-command> [args...]
 ```
 
-### Discover Available Tools
+View tool help:
+
 ```bash
-# Show all tools available from a server
-mcpli --help -- node weather-server.js
-mcpli --help -- npx @your-org/mcp-server@latest
+mcpli <tool-command> --help -- <mcp-server-command> [args...]
 ```
 
-### Get Tool-Specific Help
+Basic tool call:
+
 ```bash
-# Show parameters for a specific tool
-mcpli get-weather --help -- node weather-server.js
-mcpli build-project --help -- npx xcode-mcp@latest
+npx mcpli@latest <tool-command> [tool-options...] -- <mcp-server-command> [args...]
 ```
 
-### Execute Tools
+### Output Modes
+
 ```bash
-# Execute tools with natural CLI syntax
-mcpli get-weather --location "San Francisco" --units "celsius" -- node weather-server.js
-mcpli list-files --path "/home" --recursive -- node filesystem-mcp.js
-mcpli build-project --scheme "MyApp" --destination "iPhone 15" -- npx xcode-mcp@latest
+# Default: Friendly extraction of tool result content
+mcpli get-weather --location "NYC" -- node weather-server.js
+
+# Raw MCP response for debugging
+mcpli get-weather --location "NYC" --raw -- node weather-server.js
 ```
 
-## Examples
+### Examples
 
-### Weather Server
 ```bash
-# Get current weather
-mcpli get-weather --location "London" -- node weather-server.js
+# Discover available tools from a server
+> mcpli --help -- node weather-server.js
 
-# Get forecast with specific units
-mcpli forecast --location "Tokyo" --days 5 --units "metric" -- node weather-server.js
+Usage:
+  mcpli <tool> [tool-options...] -- <mcp-server-command> [args...]
+  mcpli <tool> --help -- <mcp-server-command> [args...]
+  mcpli --help -- <mcp-server-command> [args...]
+  mcpli daemon <subcommand> [options]
+
+Global Options:
+  --help, -h     Show this help and list all available tools
+  --verbose      Show MCP server output (stderr/logs)
+  --raw          Print raw MCP response
+  --debug        Enable debug output
+  --timeout=<seconds> Set daemon inactivity timeout (default: 1800)
+
+Available Tools:
+  get-weather          Get current weather information for any location
+  get-forecast         Get weather forecast for multiple days
+
+Tool Help:
+  mcpli <tool> --help -- <mcp-server-command>    Show detailed help for specific tool
+
+Daemon Commands:
+  daemon start   Start long-lived daemon process
+  daemon stop    Stop daemon process
+  daemon status  Show daemon status
+  daemon restart Restart daemon process
+  daemon logs    Show daemon logs
+  daemon clean   Clean up daemon files
+
+Examples:
+  mcpli get-weather --help -- node weather-server.js
+  mcpli get-weather --option value -- node weather-server.js
 ```
 
-### File System Operations
 ```bash
-# List directory contents
-mcpli list-files --path "/etc" --show-hidden -- node fs-mcp-server.js
+# Get tool-specific help
+> mcpli get-weather --help -- node weather-server.js
 
-# Read file contents
-mcpli read-file --path "/etc/hosts" -- node fs-mcp-server.js
+MCPLI Tool: get_weather
 
-# Search for files
-mcpli find-files --pattern "*.json" --directory "/project" -- node fs-mcp-server.js
+Description: Get current weather information for any location
+
+Usage: mcpli get_weather [options] -- <mcp-server-command> [args...]
+
+Options:
+  --location             (string) [required] City name (e.g., "New York", "London, UK") or coordinates as "lat,lon"
+  --units                (string) Temperature units (default: "fahrenheit")
+
+Examples:
+  mcpli get-weather --help -- node weather-server.js
+  mcpli get-weather --location "example-value" -- node weather-server.js
 ```
 
-### Development Tools
 ```bash
-# Run tests
-mcpli run-tests --suite "integration" --coverage -- npx test-runner-mcp@latest
+# Run a tool
+> mcpli get-weather --location "San Francisco" -- node weather-server.js
 
-# Deploy application
-mcpli deploy --environment "staging" --branch "main" -- npx deploy-mcp@latest
+{
+  "location": "San Francisco, California, United States",
+  "coordinates": {
+    "latitude": 37.77493,
+    "longitude": -122.41942
+  },
+  "temperature": "63°F",
+  "feels_like": "64°F",
+  "humidity": "86%",
+  "wind": "4 mph WSW",
+  "condition": "Partly cloudy",
+  "precipitation": "0\" rain",
+  "timestamp": "2025-08-24T10:00"
+}
+```
 
-# Build iOS app
-mcpli build-sim --project "./MyApp.xcodeproj" --scheme "MyApp" --simulator "iPhone 15" -- npx xcode-mcp@latest
+```bash
+# Compose the output
+> mcpli get-weather --location "San Francisco" -- node weather-server.js | jq -r '.temperature'
+
+63°F
 ```
 
 ## Advanced Features
 
-### High-Performance Daemon Mode
+For advanced users who want more control, you can control the behavior of MCPLI with the following commands.
 
-MCPLI can run MCP servers as long-lived background processes for dramatically improved performance:
+### Process Management
 
-```bash
-# Start a daemon (optional - auto-starts by default)
-mcpli daemon start -- node your-server.js
+MCPLI automatically maintains a persistent daemon to ensure your MCP server is stateful and that the same instance is reused for repeated calls.
 
-# All subsequent commands use the fast daemon automatically
-mcpli get-data --query "example"  # ~1000x faster
-
-# Manage daemons
-mcpli daemon status              # Show daemon info
-mcpli daemon stop               # Stop daemon
-mcpli daemon restart -- node your-server.js  # Restart with new config
-```
-
-### Composable Output
-
-MCPLI produces clean, structured output perfect for shell pipelines:
+You can manually manage the daemon with the following commands.
 
 ```bash
-# Pipe to jq for JSON processing
-mcpli list-items -- node server.js | jq '.[].name'
+# Start explicitly
+mcpli daemon start -- node weather-server.js
 
-# Filter and format results
-mcpli get-weather --location "NYC" -- node weather.js | jq -r '.temperature'
+# Show status (current directory)
+mcpli daemon status
 
-# Chain with other CLI tools
-mcpli search-files --pattern "*.log" -- node fs.js | xargs grep "ERROR"
+# Stop a specific configuration
+mcpli daemon stop -- node weather-server.js
+
+# Stop everything in this directory
+mcpli daemon stop
+
+# Restart one or all
+mcpli daemon restart -- node weather-server.js
+mcpli daemon restart
+
+# View logs (works with --logs or --verbose)
+mcpli daemon logs
+
+# Clean up files and stale sockets
+mcpli daemon clean
 ```
 
-### Parameter Types
+#### Multiple Daemons
 
-MCPLI automatically handles all parameter types:
+MCPLI creates separate daemon processes for each unique combination of command + arguments + environment variables. Each daemon gets its own identity based on a hash of these components.
 
 ```bash
-# Strings (default)
-mcpli send-message --text "Hello world"
+# These create different daemons (different commands)
+mcpli daemon start -- node weather-server.js
+mcpli daemon start -- python weather.py
 
-# Numbers
-mcpli get-items --limit 10 --offset 50
+# These create different daemons (different args)
+mcpli daemon start -- node weather-server.js --port 3000
+mcpli daemon start -- node weather-server.js --port 4000
 
-# Booleans
-mcpli list-files --recursive --show-hidden
-
-# JSON objects and arrays
-mcpli create-config --options '{"timeout": 30, "retries": 3}'
-mcpli batch-process --items '["file1.txt", "file2.txt"]'
+# These create different daemons (different env)
+mcpli daemon start -- API_KEY=dev node weather-server.js
+mcpli daemon start -- API_KEY=prod node weather-server.js
 ```
 
-### Debug and Development
+Each daemon is isolated with its own files in `.mcpli/`:
+- **Lock file**: `.mcpli/daemon-{hash}.lock` - Contains process info and metadata
+- **Socket file**: `.mcpli/daemon-{hash}.sock` - Unix socket for IPC communication
+
+The hash ensures that identical configurations reuse the same daemon, while different configurations get separate processes. This allows you to run multiple MCP servers simultaneously without conflicts.
+
+> [!NOTE]
+> It's recommended to add .mcpli/ to your .gitignore file to avoid committing the lock and socket files.
+
+#### Daemon Timeouts
+
+Daemons automatically shut down after a period of inactivity to free up resources (default: 30 minutes). You can customize this timeout:
 
 ```bash
-# Show raw MCP responses
-mcpli get-data --debug --raw -- node server.js
+# Set a 5-minute timeout (300 seconds)
+mcpli get-weather --timeout=300 --location "NYC" -- node weather-server.js
 
-# Enable verbose logging
-mcpli process-file --logs --debug -- node server.js
-
-# Show daemon usage
-mcpli get-info --debug -- node server.js  # Shows "Using daemon: true"
+# Set a 1-hour timeout (3600 seconds) for long-running sessions
+mcpli daemon start --timeout=3600 -- node weather-server.js
 ```
 
-## Real-World Examples
+The timeout resets every time you make a request to the daemon. Once the timeout period passes without any activity, the daemon gracefully shuts down and cleans up its files.
 
-### iOS Development with Xcode MCP
+### Environment Variables
+
+You can set default timeouts using environment variables instead of passing `--timeout` on every command:
+
 ```bash
-# Discover available Xcode operations
-mcpli --help -- npx xcode-buildmcp@latest
+# Set default daemon timeout to 10 minutes (600 seconds)
+export MCPLI_DEFAULT_TIMEOUT=600
 
-# Get help for specific build tool
-mcpli build-sim --help -- npx xcode-buildmcp@latest
+# Now all commands use this timeout by default
+mcpli get-weather --location "NYC" -- node weather-server.js
 
-# Build and run on simulator
-mcpli build-sim \
-  --projectPath "/path/to/MyApp.xcodeproj" \
-  --scheme "MyApp" \
-  --simulatorName "iPhone 15 Pro" \
-  -- npx xcode-buildmcp@latest
+# You can still override with --timeout argument
+mcpli get-weather --timeout=1200 --location "NYC" -- node weather-server.js
 ```
 
-### Database Operations
-```bash
-# Connect and query
-mcpli query --sql "SELECT * FROM users LIMIT 10" -- node postgres-mcp.js
+Available environment variables:
+- **`MCPLI_DEFAULT_TIMEOUT`**: Default daemon inactivity timeout in seconds (default: 1800)
+- **`MCPLI_CLI_TIMEOUT`**: Default CLI operation timeout in seconds (default: 30)
+- **`MCPLI_IPC_TIMEOUT`**: Default IPC connection timeout in milliseconds (default: 10000)
 
-# Run migrations
-mcpli migrate --direction "up" --steps 1 -- node db-mcp-server.js
+### Debugging
 
-# Backup database
-mcpli backup --format "sql" --compress -- node postgres-mcp.js > backup.sql.gz
-```
+- Add `--debug` for detailed diagnostics
+- Add `--verbose` to show MCP server stderr/logs when convenient
 
-### API Testing
-```bash
-# Make HTTP requests
-mcpli http-get --url "https://api.example.com/users" -- node http-mcp.js
+## Tool Parameter Syntax
 
-# Test endpoints
-mcpli api-test --endpoint "/health" --expected-status 200 -- node api-test-mcp.js
-```
+- Strings: `--location "San Francisco"`
+- Numbers: `--count 42` or `--rating -123.456`
+- Booleans: `--enabled` or `--debug false`
+- Arrays: `--tags='["web","api"]'`
+- Objects: `--config='{"timeout":5000}'`
 
-## How It Works
-
-1. **Dynamic Discovery**: MCPLI connects to your MCP server and calls `listTools()` to discover all available tools
-2. **CLI Generation**: Each tool becomes a CLI command with auto-generated help and parameter parsing
-3. **Type Inference**: Parameters are automatically typed based on JSON Schema from the MCP server
-4. **Smart Execution**: Tools are executed via `callTool()` with proper parameter marshaling
-5. **Output Processing**: Results are extracted and formatted for optimal CLI experience
-
-## FAQ
-
-**Q: Do I need to configure anything?**
-A: No! Point MCPLI at any MCP server and it automatically discovers and exposes all tools.
-
-**Q: What MCP servers work with MCPLI?**
-A: Any compliant MCP server. Popular examples include filesystem, database, API, build tools, and custom business logic servers.
-
-**Q: How is this different from calling MCP servers directly?**
-A: MCPLI provides ergonomic CLI syntax, auto-generated help, type-safe parameters, composable output, and optional high-performance daemon mode.
-
-**Q: Can I use this in shell scripts?**
-A: Absolutely! MCPLI produces clean, structured output perfect for scripting and automation.
-
-**Q: How fast is daemon mode?**
-A: ~100-1000x faster than spawning processes. First call starts the daemon automatically, subsequent calls are nearly instantaneous.
-
-## Requirements
-
-- Node.js 18+
-- Any MCP-compliant server
-
-## Contributing
-
-MCPLI is built to work with the entire MCP ecosystem. Found a compatibility issue? Please open an issue or PR.
+Both `--key value` and `--key=value` work for all types.
 
 ## License
 
 MIT
-
----
-
-**Turn any MCP server into a beautiful CLI tool. Zero configuration. Maximum ergonomics.**

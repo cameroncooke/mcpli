@@ -1,5 +1,10 @@
 {
   "permissions": {
+    "allow": [
+      "mcp__RepoPrompt__manage_selection",
+      "mcp__RepoPrompt__chat_send",
+      "Bash(vibe-tools:*)"
+    ],
     "additionalDirectories": [
       "/Volumes/Developer/mcpli"
     ]
