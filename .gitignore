@@ -42,3 +42,6 @@ Thumbs.db
 
 # MCPLI
 .mcpli/
+
+# Repomix output files
+*repomix*
