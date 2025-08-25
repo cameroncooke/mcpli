@@ -531,7 +531,7 @@ sequenceDiagram
 ### Implementation Roadmap
 
 #### Phase 1: Critical Security Fixes (Week 1)
-- [ ] **F-001**: Implement daemon ID validation and path sanitization
+- [x] **F-001**: ✅ **FIXED** - Eliminated MCPLI_DAEMON_ID attack surface with 'generate in child' approach
 - [ ] **F-013**: Fix IPC socket permission race condition
 - [ ] **F-006**: Add prototype pollution protection
 - [ ] **F-002**: Implement atomic lock operations
@@ -639,16 +639,16 @@ This redesign maintains MCPLI's core strengths while systematically addressing t
 ### Audit Pass B (Claude Code): Red-Team Assessment
 
 **CRITICAL VULNERABILITIES CONFIRMED**
-- **F-001 (Path Traversal)**: Verified exploitable via `../../../etc/passwd` in daemon ID
+- **F-001 (Path Traversal)**: ✅ **FIXED** - Attack surface eliminated by removing MCPLI_DAEMON_ID override
 - **F-002 (Lock Stealing)**: Race condition reproduced in concurrent testing scenarios  
 - **F-013 (Permission Race)**: Socket creation window confirmed exploitable by local attackers
 - **F-014 (Memory DoS)**: Unbounded buffer growth verified through malformed IPC frames
 
 **EXPLOIT SCENARIOS VALIDATED**
 ```bash
-# F-001: Path Traversal Attack
-mcpli daemon start -- node server.js
-# Daemon ID: "../../../etc/passwd" creates lock at /etc/passwd.lock
+# F-001: Path Traversal Attack - ✅ FIXED
+# MCPLI_DAEMON_ID environment variable override completely eliminated
+# Daemon ID now computed canonically in child process, cannot be externally manipulated
 
 # F-013: Permission Race Exploitation  
 # Window between socket creation and chmod 0600 allows group access
@@ -669,7 +669,7 @@ mcpli daemon start -- node server.js
 - Concurrent daemon starts create duplicate processes in ~5% of high-load scenarios
 
 **RECOMMENDATIONS PRIORITIZATION**
-1. **Week 1 (Critical)**: F-001, F-013, F-006, F-002 - Security vulnerabilities
+1. **Week 1 (Critical)**: ✅ F-001 (FIXED), F-013, F-006, F-002 - Security vulnerabilities
 2. **Week 2-3 (High)**: F-014, F-004, F-016 - Reliability and performance  
 3. **Week 4+ (Medium)**: Architecture refactoring and testing framework
 4. **Future**: Plugin system, configuration management
@@ -678,7 +678,39 @@ mcpli daemon start -- node server.js
 - Low risk from MCP SDK dependencies (requires ongoing monitoring)
 - Theoretical supply chain risks (SBOM/vulnerability scanning recommended)
 
-## 15. Appendices
+## 15. Security Fixes Implemented
+
+### ✅ F-001: Path Traversal via Daemon ID - FIXED (August 2025)
+
+**Problem**: External actors could manipulate `MCPLI_DAEMON_ID` environment variable to cause path traversal attacks, creating lock files and sockets outside the intended `.mcpli` directory.
+
+**Root Cause**: The daemon wrapper process trusted the `MCPLI_DAEMON_ID` environment variable as authoritative input without validation, allowing external override of the computed daemon identity.
+
+**Solution Implemented**: "Generate in Child" Approach
+- **Eliminated MCPLI_DAEMON_ID consumption** - wrapper.ts no longer reads this environment variable
+- **Canonical daemon ID computation** - wrapper computes daemon ID internally using same derivation as client/spawn
+- **Socket path consistency verification** - wrapper validates provided socket path matches computed daemon ID
+- **Environment variable filtering** - spawn.ts filters out all MCPLI_* variables from parent/user environment
+- **Unified identity derivation** - all components use deriveIdentityEnv(options.env) consistently
+
+**Files Modified**:
+- `src/daemon/wrapper.ts` - Removed MCPLI_DAEMON_ID consumption, added canonical computation
+- `src/daemon/spawn.ts` - Stopped passing MCPLI_DAEMON_ID, added environment filtering
+- `src/daemon/client.ts` - Unified identity derivation logic
+
+**Security Impact**: 
+- ✅ Path traversal attacks completely prevented
+- ✅ Socket redirection attacks prevented  
+- ✅ Daemon ID spoofing prevented
+- ✅ Environment variable smuggling prevented
+
+**Manual Testing**: Confirmed that `MCPLI_DAEMON_ID="../../../etc/passwd"` is completely ignored and daemon ID remains canonical 8-character hex value.
+
+**Commit**: `0252497` - "feat: Eliminate MCPLI_DAEMON_ID attack surface with 'generate in child' approach"
+
+---
+
+## 16. Appendices
 > **Draft** - Will be populated throughout analysis
 
 - A. File-by-File Map
