@@ -15,7 +15,6 @@ export interface DaemonOptions {
   debug?: boolean;
   cwd?: string;
   timeout?: number;
-  daemonId?: string;
   env?: Record<string, string>;
 }
 
@@ -31,10 +30,10 @@ export async function startDaemon(
 ): Promise<DaemonProcess> {
   const cwd = options.cwd ?? process.cwd();
 
-  // Resolve daemon ID (prefer provided, otherwise derive from command+args+env)
+  // Derive daemon ID canonically from command+args+env (no external override)
   const { generateDaemonIdWithEnv } = await import('./lock.ts');
-  const identityEnv = options.env ?? deriveIdentityEnv();
-  const id = options.daemonId ?? generateDaemonIdWithEnv(command, args, identityEnv);
+  const identityEnv = deriveIdentityEnv(options.env);
+  const id = generateDaemonIdWithEnv(command, args, identityEnv);
 
   // Compute socket path for this daemonId
   const socketPath = getSocketPath(cwd, id);
@@ -50,14 +49,22 @@ export async function startDaemon(
   // Wrapper script path
   const wrapperPath = path.join(__dirname, 'daemon', 'wrapper.js');
 
-  // Spawn detached wrapper process with merged environment
+  // Filter out MCPLI_* from parent and user env to prevent smuggling
+  const safeBaseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k, v]) => !k.startsWith('MCPLI_') && v !== undefined),
+  ) as Record<string, string>;
+  const safeUserEnv = Object.fromEntries(
+    Object.entries(options.env ?? {}).filter(([k]) => !k.startsWith('MCPLI_')),
+  ) as Record<string, string>;
+
+  // Spawn detached wrapper process with secure environment
   const daemon = spawn('node', [wrapperPath], {
     detached: true,
     stdio: 'ignore',
     cwd,
     env: {
-      ...process.env,
-      ...(options.env ?? {}),
+      ...safeBaseEnv,
+      ...safeUserEnv,
       MCPLI_SOCKET_PATH: socketPath,
       MCPLI_CWD: cwd,
       MCPLI_DEBUG: options.debug ? '1' : '0',
@@ -65,7 +72,7 @@ export async function startDaemon(
       MCPLI_LOGS: options.logs ? '1' : '0',
       MCPLI_COMMAND: command,
       MCPLI_ARGS: JSON.stringify(args),
-      MCPLI_DAEMON_ID: id,
+      MCPLI_ID_EXPECTED: id,
       MCPLI_SERVER_ENV: JSON.stringify(options.env ?? {}),
     },
   });
@@ -151,9 +158,8 @@ export class InProcessDaemon {
   async start(): Promise<void> {
     const cwd = this.options.cwd ?? process.cwd();
     const { acquireDaemonLockWithEnv, generateDaemonIdWithEnv } = await import('./lock.ts');
-    const identityEnv = this.options.env ?? deriveIdentityEnv();
-    const id =
-      this.options.daemonId ?? generateDaemonIdWithEnv(this.command, this.args, identityEnv);
+    const identityEnv = deriveIdentityEnv(this.options.env);
+    const id = generateDaemonIdWithEnv(this.command, this.args, identityEnv);
 
     // Acquire lock for this daemonId
     this.lock = await acquireDaemonLockWithEnv(
