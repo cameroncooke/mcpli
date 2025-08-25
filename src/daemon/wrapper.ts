@@ -8,10 +8,18 @@
  * for MCPLI commands.
  */
 
+import path from 'path';
 import { createIPCServer, IPCRequest, IPCServer } from './ipc.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { acquireDaemonLockWithEnv, DaemonLock, updateLastAccess } from './lock.ts';
+import {
+  acquireDaemonLockWithEnv,
+  DaemonLock,
+  updateLastAccess,
+  generateDaemonIdWithEnv,
+  deriveIdentityEnv,
+  getSocketPath,
+} from './lock.ts';
 
 class MCPLIDaemon {
   private mcpClient: Client | null = null;
@@ -38,7 +46,6 @@ class MCPLIDaemon {
     this.timeoutMs = parseInt(process.env.MCPLI_TIMEOUT ?? '1800000', 10);
     this.mcpCommand = process.env.MCPLI_COMMAND!;
     this.mcpArgs = JSON.parse(process.env.MCPLI_ARGS ?? '[]') as string[];
-    this.daemonId = process.env.MCPLI_DAEMON_ID;
     this.serverEnv = JSON.parse(process.env.MCPLI_SERVER_ENV ?? '{}') as Record<string, string>;
 
     if (!this.socketPath || !this.mcpCommand) {
@@ -57,13 +64,32 @@ class MCPLIDaemon {
         }
       }
 
+      const identityEnv = deriveIdentityEnv(this.serverEnv);
+      const computedId = generateDaemonIdWithEnv(this.mcpCommand, this.mcpArgs, identityEnv);
+      const expectedSocket = getSocketPath(this.cwd, computedId);
+
+      if (this.debug) {
+        console.log(`[DAEMON] Resolved Daemon ID: ${computedId}`);
+        console.log(`[DAEMON] Expected socket path: ${expectedSocket}`);
+      }
+
+      if (this.socketPath && path.normalize(this.socketPath) !== path.normalize(expectedSocket)) {
+        throw new Error(
+          `[DAEMON] Socket path mismatch: expected ${expectedSocket}, got ${this.socketPath}`,
+        );
+      }
+
+      // Adopt canonical identity and socket path
+      this.daemonId = computedId;
+      this.socketPath = expectedSocket;
+
       // Acquire env-aware daemon lock for this ID - writes correct PID and socket with env metadata
       this.daemonLock = await acquireDaemonLockWithEnv(
         this.mcpCommand,
         this.mcpArgs,
-        this.serverEnv,
+        identityEnv,
         this.cwd,
-        this.daemonId,
+        computedId,
       );
 
       if (this.debug) {

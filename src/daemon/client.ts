@@ -36,7 +36,7 @@ export class DaemonClient {
 
     // Compute daemonId only when we have a command (daemon discovery mode may not provide one)
     if (this.command?.trim()) {
-      const identityEnv = this.options.env ?? deriveIdentityEnv();
+      const identityEnv = deriveIdentityEnv(this.options.env);
       this.daemonId = generateDaemonIdWithEnv(this.command, this.args, identityEnv);
     }
   }
@@ -120,7 +120,7 @@ export class DaemonClient {
 
   private async startDaemon(): Promise<void> {
     try {
-      await startDaemon(this.command, this.args, { ...this.options, daemonId: this.daemonId });
+      await startDaemon(this.command, this.args, { ...this.options });
 
       // Wait a moment for daemon to be fully ready
       await new Promise((resolve) => setTimeout(resolve, 100));
