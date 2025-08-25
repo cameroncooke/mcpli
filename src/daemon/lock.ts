@@ -24,6 +24,25 @@ const MCPLI_DIR = '.mcpli';
 const LEGACY_LOCK_FILE = 'daemon.lock';
 const LEGACY_SOCK_FILE = 'daemon.sock';
 
+const DAEMON_ID_REGEX = /^[a-z0-9_-]{1,64}$/i;
+
+export function isValidDaemonId(id: string): boolean {
+  return typeof id === 'string' && DAEMON_ID_REGEX.test(id);
+}
+
+function assertValidDaemonId(id: string): void {
+  if (!isValidDaemonId(id)) {
+    throw new Error(
+      `Invalid daemon ID: "${id}". Allowed characters: letters, numbers, underscore (_), hyphen (-); max length 64.`,
+    );
+  }
+}
+
+function ensureValidDaemonId(id: string): string {
+  assertValidDaemonId(id);
+  return id;
+}
+
 function getMcpliDir(cwd = process.cwd()): string {
   return path.join(cwd, MCPLI_DIR);
 }
@@ -33,7 +52,11 @@ function getMcpliDir(cwd = process.cwd()): string {
  */
 export function getLockFilePath(cwd: string, daemonId?: string): string {
   const dir = getMcpliDir(cwd);
-  return daemonId ? path.join(dir, `daemon-${daemonId}.lock`) : path.join(dir, LEGACY_LOCK_FILE);
+  if (daemonId && daemonId.length > 0) {
+    const safeId = ensureValidDaemonId(daemonId);
+    return path.join(dir, `daemon-${safeId}.lock`);
+  }
+  return path.join(dir, LEGACY_LOCK_FILE);
 }
 
 /**
@@ -41,7 +64,11 @@ export function getLockFilePath(cwd: string, daemonId?: string): string {
  */
 export function getSocketPath(cwd: string, daemonId?: string): string {
   const dir = getMcpliDir(cwd);
-  return daemonId ? path.join(dir, `daemon-${daemonId}.sock`) : path.join(dir, LEGACY_SOCK_FILE);
+  if (daemonId && daemonId.length > 0) {
+    const safeId = ensureValidDaemonId(daemonId);
+    return path.join(dir, `daemon-${safeId}.sock`);
+  }
+  return path.join(dir, LEGACY_SOCK_FILE);
 }
 
 async function ensureMcpliDir(cwd = process.cwd()): Promise<void> {
@@ -360,7 +387,8 @@ export async function listAllDaemons(cwd: string): Promise<string[]> {
     const entries = await fs.readdir(mcpliDir);
     const daemonIds = entries
       .filter((f) => f.startsWith('daemon-') && f.endsWith('.lock'))
-      .map((f) => f.slice(7, -5));
+      .map((f) => f.slice(7, -5))
+      .filter((id) => isValidDaemonId(id));
     return Array.from(new Set(daemonIds));
   } catch {
     return [];

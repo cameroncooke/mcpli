@@ -28,7 +28,6 @@ How to run the CLI:
 For readability, the examples below use `mcpli`. If you do not have a global install, replace `mcpli` with `npx ts-node src/mcpli.ts`.
 
 Notes:
-- On Windows PowerShell, use double quotes instead of single quotes.
 - Daemons are scoped per working directory (per‑CWD). Running from another directory will create a different set of daemons.
 
 ## Available Test Servers
@@ -270,11 +269,6 @@ Note the `Socket:` path for the weather daemon (e.g. `.mcpli/daemon-ab12cd34.soc
 rm -f .mcpli/daemon-*.sock
 ```
 
-- Windows PowerShell:
-
-```powershell
-Remove-Item .mcpli\daemon-*.sock -Force
-```
 
 3) Call a weather tool again with `--debug` and provide the server command (enables fallback path):
 

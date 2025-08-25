@@ -31,7 +31,6 @@ Contents:
   - [Lock File Format (DaemonInfo):](#lock-file-format-daemoninfo)
   - [State Persistence Features:](#state-persistence-features)
   - [State Management Functions:](#state-management-functions)
-  - [Cross-Platform Considerations:](#cross-platform-considerations)
   - [Legacy Compatibility:](#legacy-compatibility)
 - [11) Automatic Startup and Fallbacks](#11-automatic-startup-and-fallbacks)
 - [12) Help System and Tool Discovery](#12-help-system-and-tool-discovery)
@@ -44,7 +43,6 @@ Contents:
   - [Error Categories:](#error-categories)
   - [Recovery Strategies:](#recovery-strategies)
   - [Error Message Quality:](#error-message-quality)
-- [14) Cross-Platform Considerations](#14-cross-platform-considerations)
   - [Path Normalization:](#path-normalization)
   - [Environment Variable Handling:](#environment-variable-handling)
   - [Process Management:](#process-management)
@@ -238,11 +236,9 @@ Daemon identity:
 - Env‑aware normalization and hashing in src/daemon/lock.ts:
   - normalizeCommand(command, args)
     - Resolves absolute path, normalizes separators.
-    - On Windows: convert backslashes to forward slashes and lowercase the path.
-    - Args normalized similarly (slashes normalized on Windows).
+    - Path resolution ensures consistent daemon IDs.
   - normalizeEnv(env)
     - Ensures string values.
-    - On Windows: uppercases env keys to avoid case‑sensitivity inconsistency.
     - Sorts keys for stable hashing.
   - generateDaemonIdWithEnv(command, args, env)
     - Creates a JSON array: [normalizedCommand, ...normalizedArgs, { env: normalizedEnv }]
@@ -675,22 +671,20 @@ MCPLI implements comprehensive error handling with graceful degradation and reco
 
 ## 14) Cross-Platform Considerations
 
-MCPLI is designed primarily for Unix-like systems (macOS, Linux) with basic Windows compatibility for path normalization and environment handling.
+MCPLI is designed for macOS systems using Unix domain sockets for IPC communication.
 
 ### Path Normalization:
 - **Absolute paths**: Use resolved absolute paths for daemon identity consistency
-- **Basic Windows support**: Convert backslashes to forward slashes and lowercase paths on Windows
 - **Path resolution**: Ensures stable daemon IDs across different working directories
 
 ### Environment Variable Handling:
 - **Key sorting**: Environment variables are sorted for stable hashing
-- **Windows case handling**: Environment variable names are uppercased on Windows for consistency
 - **Value filtering**: Undefined values are filtered out during environment processing
 
 ### Process and File Management:
-- **PID validation**: Cross-platform process detection using process.kill(pid, 0)
-- **Unix domain sockets**: Uses Unix sockets for IPC (primary platform support)
-- **File locking**: Cross-platform file locking via proper-lockfile library
+- **PID validation**: Process detection using process.kill(pid, 0)
+- **Unix domain sockets**: Uses Unix domain sockets for IPC communication
+- **File locking**: File locking via proper-lockfile library
 
 ## 15) Key Components and Code References
 
