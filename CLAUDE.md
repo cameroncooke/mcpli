@@ -100,10 +100,10 @@ The `deriveIdentityEnv()` function in `src/daemon/lock.ts` determines which envi
 ### Command Parsing
 The argument parsing in `src/mcpli.ts` handles the complex `-- <server-command>` syntax and environment variable extraction. Pay attention to the split between mcpli arguments and server command arguments.
 
-### Cross-Platform Considerations
+### macOS Implementation Details
 - **Path Normalization**: Commands and paths are normalized for consistent daemon IDs
-- **Socket Permissions**: Unix sockets use restrictive permissions (0600)
-- **Process Management**: Handles detached processes and cleanup across platforms
+- **Socket Permissions**: Unix domain sockets use restrictive permissions (0600)
+- **Process Management**: Handles detached processes and cleanup
 
 ## Contributing Guidelines
 
