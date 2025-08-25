@@ -111,6 +111,8 @@ MCPLI represents a well-conceived solution for bridging MCP servers with CLI too
 | F-018 | UX/CLI           | Unused Force Option                  |        2 | High       | `commands.ts:14-17,61-112` |
 | F-019 | Resource Mgmt    | Full Log File Loading                |        2 | Medium     | `commands.ts:273-287`      |
 | F-020 | Input Validation | Empty Command Validation Missing     |        3 | High       | `commands.ts:114-144`      |
+| F-021 | CLI/UX           | Global vs Tool Option Confusion      |        4 | High       | `mcpli.ts:argument parser` |
+| F-022 | Architecture     | Environment Variable Identity Bug    |        4 | High       | `runtime.ts:deriveIdentityEnv` |
 
 ## 4. RCAs (deep-dive bundles)
 
@@ -276,6 +278,54 @@ sequenceDiagram
 - Create sockets with restrictive umask or pre-secure parent directory
 - Implement frame size limits and connection throttling
 - Add proper request/response correlation with ID validation
+
+### RCA-005: CLI Argument Parsing and User Experience (F-021, F-022)
+
+**Symptom**: CLI is confusing and unpredictable - global options are misinterpreted as tool names, environment variable isolation is broken, standard CLI patterns not followed.
+
+**Root Causes**:
+1. **Non-standard CLI Patterns**: MCPLI doesn't follow established CLI conventions from tools like `git`, `docker`, `kubectl`
+2. **Ambiguous Argument Boundaries**: Parser cannot distinguish between global options, tool names, tool options, and server specifications
+3. **Environment Variable Scope Bug**: Shell environment variables incorrectly included in daemon identity instead of only CommandSpec environment (after `--`)
+4. **Missing Research Foundation**: Implementation lacks research into CLI best practices and user expectations
+
+**Evidence**:
+- `mcpli --debug daemon start -- node server.js` fails because `--debug` is parsed as tool name, not global option
+- `API_KEY=test1 mcpli daemon start -- node server.js` and `API_KEY=test2 mcpli daemon start -- node server.js` create different daemon IDs when they should be identical (shell env should be ignored)
+- No clear documentation on argument order requirements or global vs tool-specific option placement
+
+**Current vs Standard CLI Patterns**:
+
+| Tool Pattern | Standard CLI | MCPLI Current | Issues |
+|-------------|-------------|---------------|---------|
+| Global Options | `git --version commit` | `mcpli --debug get-weather` ❌ | Parsed as tool name |
+| Subcommand Options | `git commit --message "text"` | `mcpli get-weather --location "NYC"` ✅ | Works correctly |  
+| Help Discovery | `git --help`, `git commit --help` | `mcpli --help` ✅ | Works correctly |
+| Server Specification | `kubectl --server=... get pods` | `mcpli get-weather ... -- server cmd` | Non-standard pattern |
+
+**Industry Best Practices Research**:
+Based on analysis of `git`, `docker`, `kubectl`, and other mature CLIs:
+
+1. **Standard Structure**: `command [global-options] subcommand [subcommand-options] [args]`
+2. **Global Options Placement**: Should work before subcommand (`git --version commit`) and ideally after as well
+3. **Clear Boundaries**: Parser must distinguish global flags, subcommands, subcommand flags, and positional args
+4. **Help Integration**: Auto-generate help with clear grouping of global vs subcommand options
+5. **Server Specification**: Global flags like `--server`/`--config` should come before subcommand
+
+**Impact**: 
+- **User Confusion**: CLI behaves unpredictably, doesn't match user expectations from other tools
+- **Architectural Violation**: Environment variable isolation bug violates core daemon identity requirements
+- **Support Burden**: Non-standard behavior requires extensive documentation and user education
+- **Developer Experience**: Difficult to discover correct usage patterns
+
+**Proposed Solution**:
+1. **Redesign Argument Parser**: Implement standard `[global-opts] subcommand [sub-opts] [args]` pattern
+2. **Fix Environment Scoping**: Only include CommandSpec environment (after `--`) in daemon identity, ignore shell environment
+3. **Add Flexible Option Placement**: Allow global options before or after subcommand where reasonable
+4. **Research-Based Implementation**: Follow patterns from `git`, `docker`, `kubectl` for consistency
+5. **Enhanced Help System**: Auto-generate help showing global vs subcommand options clearly
+
+**Priority**: High - CLI usability is fundamental to tool adoption and user satisfaction
 
 ## 5. Security & Privacy Review
 

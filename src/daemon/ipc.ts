@@ -1,5 +1,4 @@
 import net from 'net';
-import { DaemonInfo } from './lock.ts';
 
 export interface ToolCallParams {
   name: string;
@@ -50,6 +49,15 @@ export async function createIPCServer(
   handler: (request: IPCRequest) => Promise<unknown>,
 ): Promise<IPCServer> {
   // Remove existing socket file if it exists
+  return createIPCServerPath(socketPath, handler, { unlinkOnClose: true, chmod: 0o600 });
+}
+
+export async function createIPCServerPath(
+  socketPath: string,
+  handler: (request: IPCRequest) => Promise<unknown>,
+  opts: { unlinkOnClose?: boolean; chmod?: number } = {},
+): Promise<IPCServer> {
+  // Pre-bind cleanup: remove existing socket file if present
   try {
     await import('fs/promises').then((fs) => fs.unlink(socketPath));
   } catch {
@@ -94,23 +102,88 @@ export async function createIPCServer(
 
   return new Promise((resolve, reject) => {
     server.listen(socketPath, async () => {
-      // Restrict socket permissions to current user only (0600)
-      try {
-        await import('fs/promises').then((fs) => fs.chmod(socketPath, 0o600));
-      } catch {
-        // Non-fatal, but log for debugging
-        console.warn('Could not set socket permissions:', socketPath);
+      const chmodMode = typeof opts.chmod === 'number' ? opts.chmod : 0o600;
+      if (chmodMode && chmodMode > 0) {
+        try {
+          await import('fs/promises').then((fs) => fs.chmod(socketPath, chmodMode));
+        } catch {
+          // Non-fatal, but log for debugging
+          console.warn('Could not set socket permissions:', socketPath);
+        }
       }
 
       resolve({
         server,
         close: () =>
-          new Promise((resolve) => {
+          new Promise((resolveClose) => {
             server.close(() => {
-              // Clean up socket file
-              import('fs/promises')
-                .then((fs) => fs.unlink(socketPath).catch(() => {}))
-                .finally(resolve);
+              // Conditionally clean up socket file
+              const shouldUnlink = opts.unlinkOnClose !== false;
+              if (shouldUnlink) {
+                import('fs/promises')
+                  .then((fs) => fs.unlink(socketPath).catch(() => {}))
+                  .finally(resolveClose);
+              } else {
+                resolveClose();
+              }
+            });
+          }),
+      });
+    });
+
+    server.on('error', reject);
+  });
+}
+
+export async function createIPCServerFromFD(
+  fd: number,
+  handler: (request: IPCRequest) => Promise<unknown>,
+): Promise<IPCServer> {
+  const server = net.createServer((client) => {
+    let buffer = '';
+
+    client.on('data', async (data) => {
+      buffer += data.toString();
+
+      // Handle multiple JSON messages in buffer
+      while (true) {
+        const newlineIndex = buffer.indexOf('\n');
+        if (newlineIndex === -1) break;
+
+        const message = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+
+        if (!message.trim()) continue;
+
+        try {
+          const request: IPCRequest = JSON.parse(message) as IPCRequest;
+          const result = await handler(request);
+          const response: IPCResponse = { id: request.id, result };
+          client.write(JSON.stringify(response) + '\n');
+        } catch (error) {
+          const response: IPCResponse = {
+            id: 'unknown',
+            error: error instanceof Error ? error.message : String(error),
+          };
+          client.write(JSON.stringify(response) + '\n');
+        }
+      }
+    });
+
+    client.on('error', (error) => {
+      console.error('IPC client error:', error);
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    server.listen({ fd, exclusive: false }, () => {
+      resolve({
+        server,
+        close: () =>
+          new Promise((resolveClose) => {
+            server.close(() => {
+              // No unlink behavior for FD-based servers; launchd owns the socket
+              resolveClose();
             });
           }),
       });
@@ -169,20 +242,6 @@ export async function sendIPCRequest(
       reject(new Error('IPC connection timeout'));
     });
   });
-}
-
-export async function testIPCConnection(daemonInfo: DaemonInfo): Promise<boolean> {
-  try {
-    const request: IPCRequest = {
-      id: Date.now().toString(),
-      method: 'ping',
-    };
-
-    await sendIPCRequest(daemonInfo.socket, request, 2000);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function generateRequestId(): string {
