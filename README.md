@@ -1,3 +1,5 @@
+![MCPLI Logo](banner.png)
+
 # MCPLI
 
 Transform stdio-based MCP servers into a first‑class CLI tool.
@@ -272,6 +274,21 @@ The hash ensures that identical configurations reuse the same daemon, while diff
 
 > [!NOTE]
 > It's recommended to add .mcpli/ to your .gitignore file to avoid committing the lock and socket files.
+
+**Shell environment does not affect daemon identity**
+- Only environment variables provided after -- as KEY=VALUE tokens (CommandSpec env) are considered when computing the daemon ID.
+- Setting env before mcpli runs does not create a distinct daemon.
+
+Examples:
+```bash
+# Different daemons (different CommandSpec env)
+mcpli daemon start -- API_KEY=dev node weather-server.js
+mcpli daemon start -- API_KEY=prod node weather-server.js
+
+# Same daemon (shell env not considered for identity)
+API_KEY=dev mcpli daemon start -- node weather-server.js
+mcpli daemon start -- node weather-server.js
+```
 
 #### Daemon Timeouts
 

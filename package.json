@@ -28,10 +28,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp src/daemon/wrapper.js dist/daemon/wrapper.js",
-    "postbuild": "chmod +x dist/mcpli.js",
-    "dev": "npm run build && npm run postbuild",
-    "lint": "echo 'Lint step - add ESLint when needed'",
+    "build": "npx tsup",
+    "dev": "npm run build",
+    "lint": "eslint 'src/**/*.{js,ts}'",
+    "lint:fix": "eslint 'src/**/*.{js,ts}' --fix",
+    "format": "prettier --write 'src/**/*.{js,ts}'",
+    "format:check": "prettier --check 'src/**/*.{js,ts}'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -39,9 +41,18 @@
     "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.23.0",
     "@types/node": "^22.10.2",
     "@types/proper-lockfile": "^4.1.4",
-    "typescript": "^5.7.2"
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
+    "eslint": "^9.23.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-prettier": "^5.2.5",
+    "prettier": "^3.5.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.28.0"
   },
   "engines": {
     "node": ">=18.0.0"

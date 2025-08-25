@@ -54,7 +54,10 @@ async function ensureMcpliDir(cwd = process.cwd()): Promise<void> {
 /**
  * Normalize command and args across platforms (absolute path, normalized separators)
  */
-export function normalizeCommand(command: string, args: string[] = []): { command: string; args: string[] } {
+export function normalizeCommand(
+  command: string,
+  args: string[] = [],
+): { command: string; args: string[] } {
   const trimmed = String(command || '').trim();
   const normCommand = path.isAbsolute(trimmed)
     ? path.normalize(trimmed)
@@ -64,10 +67,10 @@ export function normalizeCommand(command: string, args: string[] = []): { comman
     .map((a) => String(a ?? '').trim())
     .filter((a) => a.length > 0);
 
-  const normalizedCommand = process.platform === 'win32' ? normCommand.replace(/\\/g, '/').toLowerCase() : normCommand;
-  const normalizedArgs = process.platform === 'win32'
-    ? normArgs.map((a) => a.replace(/\\/g, '/'))
-    : normArgs;
+  const normalizedCommand =
+    process.platform === 'win32' ? normCommand.replace(/\\/g, '/').toLowerCase() : normCommand;
+  const normalizedArgs =
+    process.platform === 'win32' ? normArgs.map((a) => a.replace(/\\/g, '/')) : normArgs;
 
   return { command: normalizedCommand, args: normalizedArgs };
 }
@@ -83,9 +86,31 @@ function normalizeEnv(env: Record<string, string> = {}): Record<string, string> 
 }
 
 /**
+ * Derive the effective environment that should be used for daemon identity.
+ * Includes process.env but excludes MCPLI_* runtime variables.
+ */
+export function deriveIdentityEnv(
+  explicitEnv: Record<string, string> = {},
+): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (k.startsWith('MCPLI_')) continue;
+    base[k] = String(v);
+  }
+  // explicit overrides base
+  const merged = { ...base, ...explicitEnv };
+  return normalizeEnv(merged);
+}
+
+/**
  * Env-aware daemon ID generation. Includes normalized env into the hash.
  */
-export function generateDaemonIdWithEnv(command: string, args: string[] = [], env: Record<string, string> = {}): string {
+export function generateDaemonIdWithEnv(
+  command: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+): string {
   const norm = normalizeCommand(command, args);
   const normEnv = normalizeEnv(env);
   const input = JSON.stringify([norm.command, ...norm.args, { env: normEnv }]);
@@ -101,7 +126,7 @@ export async function acquireDaemonLockWithEnv(
   args: string[],
   env: Record<string, string> = {},
   cwd = process.cwd(),
-  daemonId?: string
+  daemonId?: string,
 ): Promise<DaemonLock> {
   await ensureMcpliDir(cwd);
 
@@ -118,7 +143,7 @@ export async function acquireDaemonLockWithEnv(
   try {
     const releaseFileLock = await lock(lockPath, {
       retries: 0,
-      stale: 60000 // 1 minute
+      stale: 60000, // 1 minute
     });
 
     const daemonInfo: DaemonInfo = {
@@ -129,24 +154,26 @@ export async function acquireDaemonLockWithEnv(
       started: new Date().toISOString(),
       lastAccess: new Date().toISOString(),
       cwd,
-      env: normalizeEnv(env)
+      env: normalizeEnv(env),
     };
 
     await fs.writeFile(lockPath, JSON.stringify(daemonInfo, null, 2));
 
     return {
       info: daemonInfo,
-      release: async () => {
+      release: async (): Promise<void> => {
         try {
           await fs.unlink(lockPath);
         } catch {
           // File might already be deleted
         }
         await releaseFileLock();
-      }
+      },
     };
   } catch (error) {
-    throw new Error(`Cannot acquire daemon lock: ${error instanceof Error ? error.message : error}`);
+    throw new Error(
+      `Cannot acquire daemon lock: ${error instanceof Error ? error.message : error}`,
+    );
   }
 }
 
@@ -168,7 +195,7 @@ export async function acquireDaemonLock(
   command: string,
   args: string[],
   cwd = process.cwd(),
-  daemonId?: string
+  daemonId?: string,
 ): Promise<DaemonLock> {
   await ensureMcpliDir(cwd);
 
@@ -185,7 +212,7 @@ export async function acquireDaemonLock(
   try {
     const releaseFileLock = await lock(lockPath, {
       retries: 0,
-      stale: 60000 // 1 minute
+      stale: 60000, // 1 minute
     });
 
     const daemonInfo: DaemonInfo = {
@@ -195,24 +222,26 @@ export async function acquireDaemonLock(
       args,
       started: new Date().toISOString(),
       lastAccess: new Date().toISOString(),
-      cwd
+      cwd,
     };
 
     await fs.writeFile(lockPath, JSON.stringify(daemonInfo, null, 2));
 
     return {
       info: daemonInfo,
-      release: async () => {
+      release: async (): Promise<void> => {
         try {
           await fs.unlink(lockPath);
         } catch {
           // File might already be deleted
         }
         await releaseFileLock();
-      }
+      },
     };
   } catch (error) {
-    throw new Error(`Cannot acquire daemon lock: ${error instanceof Error ? error.message : error}`);
+    throw new Error(
+      `Cannot acquire daemon lock: ${error instanceof Error ? error.message : error}`,
+    );
   }
 }
 
@@ -220,11 +249,14 @@ export async function acquireDaemonLock(
  * Get daemon info for a specific daemonId. If daemonId is omitted,
  * falls back to legacy single-daemon file (daemon.lock).
  */
-export async function getDaemonInfo(cwd = process.cwd(), daemonId?: string): Promise<DaemonInfo | null> {
+export async function getDaemonInfo(
+  cwd = process.cwd(),
+  daemonId?: string,
+): Promise<DaemonInfo | null> {
   try {
     const lockPath = getLockFilePath(cwd, daemonId);
     const data = await fs.readFile(lockPath, 'utf8');
-    return JSON.parse(data);
+    return JSON.parse(data) as DaemonInfo;
   } catch {
     return null;
   }
@@ -279,7 +311,11 @@ export async function cleanupStaleLock(cwd = process.cwd(), daemonId?: string): 
 /**
  * Stop a specific daemon by ID (or legacy if none provided).
  */
-export async function stopDaemon(cwd = process.cwd(), force = false, daemonId?: string): Promise<boolean> {
+export async function stopDaemon(
+  cwd = process.cwd(),
+  force = false,
+  daemonId?: string,
+): Promise<boolean> {
   const info = await getDaemonInfo(cwd, daemonId);
   if (!info) return false;
 
@@ -291,7 +327,7 @@ export async function stopDaemon(cwd = process.cwd(), force = false, daemonId?: 
       for (let i = 0; i < 50; i++) {
         try {
           process.kill(info.pid, 0);
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         } catch {
           // Process has exited
           break;
@@ -323,8 +359,8 @@ export async function listAllDaemons(cwd: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(mcpliDir);
     const daemonIds = entries
-      .filter(f => f.startsWith('daemon-') && f.endsWith('.lock'))
-      .map(f => f.slice(7, -5));
+      .filter((f) => f.startsWith('daemon-') && f.endsWith('.lock'))
+      .map((f) => f.slice(7, -5));
     return Array.from(new Set(daemonIds));
   } catch {
     return [];
@@ -339,14 +375,14 @@ export async function cleanupAllStaleDaemons(cwd: string): Promise<void> {
 
   try {
     const entries = await fs.readdir(mcpliDir);
-    const lockFiles = entries.filter(f => f.startsWith('daemon-') && f.endsWith('.lock'));
+    const lockFiles = entries.filter((f) => f.startsWith('daemon-') && f.endsWith('.lock'));
 
     for (const lockFile of lockFiles) {
       const lockPath = path.join(mcpliDir, lockFile);
       const daemonId = lockFile.slice(7, -5);
 
       try {
-        const info = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+        const info = JSON.parse(await fs.readFile(lockPath, 'utf8')) as DaemonInfo;
         if (!info.pid || !isPidRunning(info.pid)) {
           await fs.unlink(lockPath).catch(() => {});
           const sockPath = path.join(mcpliDir, `daemon-${daemonId}.sock`);

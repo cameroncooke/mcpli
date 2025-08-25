@@ -1,16 +1,14 @@
-import { 
-  isDaemonRunning, 
-  getDaemonInfo, 
-  stopDaemon, 
-  cleanupStaleLock,
+import {
+  isDaemonRunning,
+  getDaemonInfo,
   listAllDaemons,
   cleanupAllStaleDaemons,
-  generateDaemonId,
   normalizeCommand,
-  generateDaemonIdWithEnv
-} from './lock.js';
-import { startDaemon, DaemonOptions } from './spawn.js';
-import { testIPCConnection } from './ipc.js';
+  generateDaemonIdWithEnv,
+  deriveIdentityEnv,
+} from './lock.ts';
+import { startDaemon, DaemonOptions } from './spawn.ts';
+import { testIPCConnection } from './ipc.ts';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -19,15 +17,18 @@ export interface DaemonCommandOptions extends DaemonOptions {
   env?: Record<string, string>;
 }
 
-// Utility: compute daemonId from a command + args using the same normalization as the lock layer
-function computeDaemonIdFromCommand(command?: string, args: string[] = []): string | undefined {
-  if (!command || !command.trim()) return undefined;
-  const norm = normalizeCommand(command, args);
-  return generateDaemonId(norm.command, norm.args);
+interface DaemonEntry {
+  id?: string;
+  [key: string]: unknown;
 }
 
-function computeDaemonIdFromCommandWithEnv(command?: string, args: string[] = [], env: Record<string, string> = {}): string | undefined {
-  if (!command || !command.trim()) return undefined;
+// Utility: compute daemonId from a command + args using the same normalization as the lock layer
+function computeDaemonIdFromCommandWithEnv(
+  command?: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+): string | undefined {
+  if (!command?.trim()) return undefined;
   const norm = normalizeCommand(command, args);
   return generateDaemonIdWithEnv(norm.command, norm.args, env);
 }
@@ -39,20 +40,29 @@ function formatCommand(command?: string, args: string[] = []): string {
 }
 
 // Utility: normalize entries from listAllDaemons() into ids
-function extractDaemonIds(entries: any[]): string[] {
+function extractDaemonIds(entries: unknown[]): string[] {
   if (!Array.isArray(entries)) return [];
   const ids = entries
-    .map((d: any) => {
+    .map((d: unknown) => {
       if (typeof d === 'string') return d;
-      if (d && typeof d === 'object' && typeof d.id === 'string') return d.id;
+      if (
+        d &&
+        typeof d === 'object' &&
+        (d as DaemonEntry).id &&
+        typeof (d as DaemonEntry).id === 'string'
+      )
+        return (d as DaemonEntry).id;
       return undefined;
     })
-    .filter((v: any): v is string => typeof v === 'string');
+    .filter((v: unknown): v is string => typeof v === 'string');
   return Array.from(new Set(ids));
 }
 
 // Utility: attempt to kill daemon by id, with graceful then forceful fallback
-async function killDaemonById(cwd: string, daemonId: string): Promise<{ killed: boolean; reason?: string }> {
+async function killDaemonById(
+  cwd: string,
+  daemonId: string,
+): Promise<{ killed: boolean; reason?: string }> {
   try {
     const info = await getDaemonInfo(cwd, daemonId);
     if (!info || typeof info.pid !== 'number') {
@@ -66,15 +76,18 @@ async function killDaemonById(cwd: string, daemonId: string): Promise<{ killed: 
 
     try {
       process.kill(info.pid, 'SIGTERM');
-    } catch (err: any) {
-      if (!err || err.code !== 'ESRCH') {
-        return { killed: false, reason: `SIGTERM failed: ${err?.message || String(err)}` };
+    } catch (err: unknown) {
+      if (!err || (err as { code?: string }).code !== 'ESRCH') {
+        return {
+          killed: false,
+          reason: `SIGTERM failed: ${(err as Error)?.message ?? String(err)}`,
+        };
       }
       // If ESRCH, process already gone; proceed to cleanup
     }
 
     // Give it a moment to exit gracefully
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const stillRunning = await isDaemonRunning(cwd, daemonId).catch(() => false);
     if (!stillRunning) {
       return { killed: true };
@@ -83,13 +96,16 @@ async function killDaemonById(cwd: string, daemonId: string): Promise<{ killed: 
     // Force kill
     try {
       process.kill(info.pid, 'SIGKILL');
-    } catch (err: any) {
-      if (!err || err.code !== 'ESRCH') {
-        return { killed: false, reason: `SIGKILL failed: ${err?.message || String(err)}` };
+    } catch (err: unknown) {
+      if (!err || (err as { code?: string }).code !== 'ESRCH') {
+        return {
+          killed: false,
+          reason: `SIGKILL failed: ${(err as Error)?.message ?? String(err)}`,
+        };
       }
     }
 
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250));
     return { killed: true };
   } finally {
     await cleanupAllStaleDaemons(cwd).catch(() => {});
@@ -97,32 +113,32 @@ async function killDaemonById(cwd: string, daemonId: string): Promise<{ killed: 
 }
 
 export async function handleDaemonStart(
-  command: string, 
-  args: string[], 
-  options: DaemonCommandOptions = {}
+  command: string,
+  args: string[],
+  options: DaemonCommandOptions = {},
 ): Promise<void> {
-  const cwd = options.cwd || process.cwd();
-  const daemonId = computeDaemonIdFromCommandWithEnv(command, args, options.env || {});
-  
+  const cwd = options.cwd ?? process.cwd();
+  const identityEnv = deriveIdentityEnv(options.env);
+  const daemonId = computeDaemonIdFromCommandWithEnv(command, args, identityEnv);
+
   // Check if daemon is already running for this specific command
-  if (daemonId && await isDaemonRunning(cwd, daemonId)) {
+  if (daemonId && (await isDaemonRunning(cwd, daemonId))) {
     const info = await getDaemonInfo(cwd, daemonId);
     console.log(`Daemon is already running for this command (PID ${info?.pid})`);
     return;
   }
-  
+
   try {
     console.log(`Starting daemon: ${command} ${args.join(' ')}`);
-    
-    const daemon = await startDaemon(command, args, options);
-    
+
+    const daemon = await startDaemon(command, args, { ...options, env: identityEnv });
+
     console.log(`Daemon started successfully (PID ${daemon.lock.info.pid})`);
     console.log(`Socket: ${daemon.lock.info.socket}`);
-    
+
     if (options.debug) {
       console.log('Debug mode enabled - daemon will log to console');
     }
-    
   } catch (error) {
     console.error(`Failed to start daemon: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
@@ -132,14 +148,15 @@ export async function handleDaemonStart(
 export async function handleDaemonStop(
   command?: string,
   args: string[] = [],
-  options: DaemonCommandOptions = {}
+  options: DaemonCommandOptions = {},
 ): Promise<void> {
-  const cwd = options.cwd || process.cwd();
-  
+  const cwd = options.cwd ?? process.cwd();
+
   try {
     let targetIds: string[] = [];
-    const daemonId = computeDaemonIdFromCommandWithEnv(command, args, options.env || {});
-    
+    const identityEnv = deriveIdentityEnv(options.env);
+    const daemonId = computeDaemonIdFromCommandWithEnv(command, args, identityEnv);
+
     if (daemonId) {
       targetIds = [daemonId];
     } else {
@@ -147,12 +164,12 @@ export async function handleDaemonStop(
       const entries = await listAllDaemons(cwd);
       targetIds = extractDaemonIds(entries);
     }
-    
+
     if (targetIds.length === 0) {
       console.log('No daemons found');
       return;
     }
-    
+
     let stopped = 0;
     for (const id of targetIds) {
       const result = await killDaemonById(cwd, id);
@@ -163,9 +180,8 @@ export async function handleDaemonStop(
         console.log(`Skipped daemon ${id}${result.reason ? ` (${result.reason})` : ''}`);
       }
     }
-    
+
     console.log(`Done. ${stopped} daemon(s) stopped.`);
-    
   } catch (error) {
     console.error(`Failed to stop daemon: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
@@ -173,21 +189,21 @@ export async function handleDaemonStop(
 }
 
 export async function handleDaemonStatus(options: DaemonCommandOptions = {}): Promise<void> {
-  const cwd = options.cwd || process.cwd();
-  
+  const cwd = options.cwd ?? process.cwd();
+
   try {
     const entries = await listAllDaemons(cwd);
     const ids = extractDaemonIds(entries);
-    
+
     if (ids.length === 0) {
       console.log('No daemons found in this directory');
       return;
     }
-    
+
     let anyRunning = false;
     for (const id of ids) {
       const running = await isDaemonRunning(cwd, id);
-      
+
       if (running) {
         anyRunning = true;
         const info = await getDaemonInfo(cwd, id).catch(() => null);
@@ -195,9 +211,11 @@ export async function handleDaemonStatus(options: DaemonCommandOptions = {}): Pr
         const args = Array.isArray(info?.args) ? info.args : [];
         const pid = info?.pid;
         const started = info?.started ? new Date(info.started).toLocaleString() : 'unknown';
-        const lastAccess = info?.lastAccess ? new Date(info.lastAccess).toLocaleString() : 'unknown';
+        const lastAccess = info?.lastAccess
+          ? new Date(info.lastAccess).toLocaleString()
+          : 'unknown';
         const canConnect = info ? await testIPCConnection(info) : false;
-        
+
         console.log(`Daemon ${id}:`);
         console.log(`  Status: Running`);
         console.log(`  PID: ${pid ?? 'unknown'}`);
@@ -206,29 +224,28 @@ export async function handleDaemonStatus(options: DaemonCommandOptions = {}): Pr
         console.log(`  Last access: ${lastAccess}`);
         console.log(`  Socket: ${info?.socket ?? 'unknown'}`);
         console.log(`  IPC connection: ${canConnect ? 'OK' : 'FAILED'}`);
-        
+
         if (info?.started) {
           const uptimeMs = Date.now() - new Date(info.started).getTime();
           const uptimeMinutes = Math.floor(uptimeMs / 60000);
           const uptimeHours = Math.floor(uptimeMinutes / 60);
           const uptimeDays = Math.floor(uptimeHours / 24);
-          
+
           let uptimeStr = '';
           if (uptimeDays > 0) uptimeStr += `${uptimeDays}d `;
           if (uptimeHours > 0) uptimeStr += `${uptimeHours % 24}h `;
           uptimeStr += `${uptimeMinutes % 60}m`;
-          
+
           console.log(`  Uptime: ${uptimeStr}`);
         }
-        
+
         console.log('');
       }
     }
-    
+
     if (!anyRunning) {
       console.log('No running daemons found');
     }
-    
   } catch (error) {
     console.error(`Error reading daemon status: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
@@ -238,16 +255,16 @@ export async function handleDaemonStatus(options: DaemonCommandOptions = {}): Pr
 export async function handleDaemonRestart(
   command?: string,
   args: string[] = [],
-  options: DaemonCommandOptions = {}
+  options: DaemonCommandOptions = {},
 ): Promise<void> {
   console.log('Restarting daemon...');
-  
+
   // Stop existing daemon(s) - if command provided, stop specific daemon; otherwise stop all
   await handleDaemonStop(command, args, options);
-  
+
   // Wait a moment for cleanup
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
   // For restart with a specific command, start that daemon
   if (command) {
     await handleDaemonStart(command, args, options);
@@ -257,14 +274,14 @@ export async function handleDaemonRestart(
 }
 
 export async function handleDaemonLogs(options: DaemonCommandOptions = {}): Promise<void> {
-  const cwd = options.cwd || process.cwd();
+  const cwd = options.cwd ?? process.cwd();
   const logPath = path.join(cwd, '.mcpli', 'daemon.log');
-  
+
   try {
     const logContent = await fs.readFile(logPath, 'utf8');
     console.log(logContent);
   } catch (error) {
-    if ((error as any).code === 'ENOENT') {
+    if ((error as { code?: string }).code === 'ENOENT') {
       console.log('No log file found. Daemon may not have been started with --logs flag.');
     } else {
       console.error(`Failed to read log file: ${error instanceof Error ? error.message : error}`);
@@ -273,14 +290,14 @@ export async function handleDaemonLogs(options: DaemonCommandOptions = {}): Prom
 }
 
 export async function handleDaemonClean(options: DaemonCommandOptions = {}): Promise<void> {
-  const cwd = options.cwd || process.cwd();
+  const cwd = options.cwd ?? process.cwd();
   const mcpliDir = path.join(cwd, '.mcpli');
-  
+
   try {
     // Stop all running daemons first
     const entries = await listAllDaemons(cwd);
     const ids = extractDaemonIds(entries);
-    
+
     let stopped = 0;
     for (const id of ids) {
       const result = await killDaemonById(cwd, id);
@@ -289,14 +306,14 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
         console.log(`Stopped daemon ${id}`);
       }
     }
-    
+
     if (stopped > 0) {
       console.log(`Stopped ${stopped} daemon(s)`);
     }
-    
+
     // Remove stale lock files and metadata
     await cleanupAllStaleDaemons(cwd).catch(() => {});
-    
+
     // Remove orphaned sockets
     let dirEntries: string[] = [];
     try {
@@ -306,27 +323,25 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
       console.log('Daemon cleanup complete');
       return;
     }
-    
+
     const socketFiles = dirEntries.filter((f) => /^daemon-.+\.sock$/.test(f));
-    let socketsRemoved = 0;
     for (const sockName of socketFiles) {
       const idMatch = /^daemon-(.+)\.sock$/.exec(sockName);
       const daemonId = idMatch?.[1];
       if (!daemonId) continue;
-      
+
       const running = await isDaemonRunning(cwd, daemonId).catch(() => false);
       if (!running) {
         const sockPath = path.join(mcpliDir, sockName);
         try {
           await fs.unlink(sockPath);
-          socketsRemoved++;
           console.log(`Removed stale socket ${sockName}`);
         } catch {
           // ignore unlink errors
         }
       }
     }
-    
+
     // Remove .mcpli directory if empty
     try {
       await fs.rmdir(mcpliDir);
@@ -334,11 +349,12 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
     } catch {
       // Directory not empty or doesn't exist
     }
-    
+
     console.log('Daemon cleanup complete');
-    
   } catch (error) {
-    console.error(`Failed to clean daemon files: ${error instanceof Error ? error.message : error}`);
+    console.error(
+      `Failed to clean daemon files: ${error instanceof Error ? error.message : error}`,
+    );
     process.exit(1);
   }
 }

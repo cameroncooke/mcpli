@@ -2,23 +2,24 @@
 
 /**
  * MCPLI - Turn any MCP server into a first-class CLI tool
- * 
+ *
  * This version supports both stateless mode and long-lived daemon processes.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { DaemonClient } from './daemon/index.js';
-import { 
-  handleDaemonStart, 
-  handleDaemonStop, 
-  handleDaemonStatus, 
+import { DaemonClient } from './daemon/index.ts';
+import { Tool, ToolCallResult } from './daemon/ipc.ts';
+import {
+  handleDaemonStart,
+  handleDaemonStop,
+  handleDaemonStatus,
   handleDaemonRestart,
   handleDaemonLogs,
   handleDaemonClean,
-  printDaemonHelp
-} from './daemon/index.js';
-import { getConfig, resolveDaemonTimeout } from './config.js';
+  printDaemonHelp,
+} from './daemon/index.ts';
+import { getConfig, getDaemonTimeoutMs } from './config.ts';
 
 interface GlobalOptions {
   help?: boolean;
@@ -69,7 +70,15 @@ function parseCommandSpec(tokens: string[]): CommandSpec {
   return { env, command, args };
 }
 
-function parseArgs(argv: string[]) {
+function parseArgs(argv: string[]): {
+  globals: GlobalOptions;
+  childCommand: string;
+  childArgs: string[];
+  childEnv: Record<string, string>;
+  userArgs: string[];
+  daemonCommand?: string;
+  daemonArgs?: string[];
+} {
   const args = argv.slice(2); // Remove node and script name
   const config = getConfig();
   const globals: GlobalOptions = { timeout: config.defaultTimeoutSeconds };
@@ -83,14 +92,14 @@ function parseArgs(argv: string[]) {
     // daemon --help
     if (args[1] === '--help' || args[1] === '-h') {
       globals.help = true;
-      return { 
-        globals, 
+      return {
+        globals,
         daemonCommand: '',
         daemonArgs: [],
         childCommand: '',
         childArgs: [],
         childEnv: {},
-        userArgs: []
+        userArgs: [],
       };
     }
 
@@ -109,14 +118,14 @@ function parseArgs(argv: string[]) {
       }
     }
 
-    return { 
-      globals, 
-      daemonCommand, 
+    return {
+      globals,
+      daemonCommand,
       daemonArgs,
       childCommand: '',
       childArgs: [],
       childEnv: {},
-      userArgs: []
+      userArgs: [],
     };
   }
 
@@ -134,7 +143,7 @@ function parseArgs(argv: string[]) {
         childCommand: '',
         childArgs: [],
         childEnv: {},
-        userArgs: args
+        userArgs: args,
       };
     }
 
@@ -144,7 +153,7 @@ function parseArgs(argv: string[]) {
       childCommand: '',
       childArgs: [],
       childEnv: {},
-      userArgs: args
+      userArgs: args,
     };
   }
 
@@ -204,19 +213,25 @@ async function discoverToolsEx(
   command: string,
   args: string[],
   env: Record<string, string>,
-  options: GlobalOptions
-) {
+  options: GlobalOptions,
+): Promise<{
+  tools: Tool[];
+  daemonClient?: DaemonClient;
+  client?: Client;
+  isDaemon: boolean;
+  close: () => Promise<void>;
+}> {
   // If no command provided, only try daemon mode
   const daemonOnly = !command;
 
   // Prefer daemon client
   const daemonClient = new DaemonClient(command, args, {
-    logs: options.logs || options.verbose,
+    logs: options.logs ?? options.verbose,
     debug: options.debug,
-    timeout: options.timeout,
+    timeout: getDaemonTimeoutMs(options.timeout),
     autoStart: !!command,
     fallbackToStateless: !daemonOnly,
-    env
+    env,
   });
 
   try {
@@ -225,30 +240,27 @@ async function discoverToolsEx(
       tools: result.tools || [],
       daemonClient,
       isDaemon: true,
-      close: () => Promise.resolve()
+      close: () => Promise.resolve(),
     };
   } catch (error) {
     if (daemonOnly) throw error;
 
     if (options.debug) {
-      console.error('[DEBUG] Daemon failed, using direct connection:', error);
+      console.log('[DEBUG] Daemon failed, using direct connection:', error);
     }
 
     const safeEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined)
+      Object.entries(process.env).filter(([, v]) => v !== undefined),
     ) as Record<string, string>;
 
     const transport = new StdioClientTransport({
       command,
       args,
       env: Object.keys(env || {}).length ? { ...safeEnv, ...env } : undefined,
-      stderr: (options.logs || options.verbose) ? 'inherit' : 'ignore'
+      stderr: options.logs || options.verbose ? 'inherit' : 'ignore',
     });
 
-    const client = new Client(
-      { name: 'mcpli', version: '1.0.0' },
-      { capabilities: {} }
-    );
+    const client = new Client({ name: 'mcpli', version: '1.0.0' }, { capabilities: {} });
 
     try {
       await client.connect(transport);
@@ -257,74 +269,12 @@ async function discoverToolsEx(
         tools: result.tools || [],
         client,
         isDaemon: false,
-        close: () => client.close()
+        close: () => client.close(),
       };
     } catch (error) {
       throw new Error(
-        `Failed to connect to MCP server: ${
-          error instanceof Error ? error.message : error
-        }`
+        `Failed to connect to MCP server: ${error instanceof Error ? error.message : error}`,
       );
-    }
-  }
-}
-
-async function discoverTools(command: string, args: string[], options: GlobalOptions) {
-  // If no command provided, only try daemon mode (no fallback to stateless)
-  const daemonOnly = !command;
-  
-  // Try daemon client first, with fallback to direct connection
-  const daemonClient = new DaemonClient(command, args, {
-    logs: options.logs || options.verbose,
-    debug: options.debug,
-    timeout: options.timeout,
-    autoStart: !!command, // Auto-start whenever we have a command
-    fallbackToStateless: !daemonOnly // No fallback if daemon-only mode
-  });
-  
-  try {
-    const result = await daemonClient.listTools();
-    return { 
-      tools: result.tools || [], 
-      daemonClient,
-      isDaemon: true,
-      close: () => Promise.resolve()
-    };
-  } catch (error) {
-    // If daemon-only mode (no command), don't try direct connection
-    if (daemonOnly) {
-      throw error;
-    }
-    
-    // Fallback to direct connection
-    if (options.debug) {
-      console.error('[DEBUG] Daemon failed, using direct connection:', error);
-    }
-    
-    const transport = new StdioClientTransport({
-      command,
-      args,
-      stderr: (options.logs || options.verbose) ? 'inherit' : 'ignore'
-    });
-    
-    const client = new Client({
-      name: 'mcpli',
-      version: '1.0.0'
-    }, {
-      capabilities: {}
-    });
-    
-    try {
-      await client.connect(transport);
-      const result = await client.listTools();
-      return { 
-        tools: result.tools || [], 
-        client, 
-        isDaemon: false,
-        close: () => client.close() 
-      };
-    } catch (error) {
-      throw new Error(`Failed to connect to MCP server: ${error instanceof Error ? error.message : error}`);
     }
   }
 }
@@ -333,9 +283,9 @@ function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function findTool(userArgs: string[], tools: any[]) {
-  const toolMap = new Map();
-  
+function findTool(userArgs: string[], tools: Tool[]): { tool: Tool; toolName: string } | null {
+  const toolMap = new Map<string, Tool>();
+
   // Build tool index
   for (const tool of tools) {
     const name = tool.name;
@@ -343,22 +293,30 @@ function findTool(userArgs: string[], tools: any[]) {
     toolMap.set(name.replace(/_/g, '-'), tool);
     toolMap.set(normalizeToolName(name), tool);
   }
-  
+
   // Look for tool selection - first non-option argument is the tool name
   for (const arg of userArgs) {
     if (!arg.startsWith('--') && !arg.startsWith('-')) {
       if (toolMap.has(arg)) {
-        return { tool: toolMap.get(arg), toolName: arg };
+        const tool = toolMap.get(arg);
+        if (tool) {
+          return { tool, toolName: arg };
+        }
       }
     }
   }
-  
+
   return null;
 }
 
-function parseParams(userArgs: string[], selectedTool: any, toolName: string): Record<string, any> {
-  const params: Record<string, any> = {};
-  const schema = selectedTool.inputSchema?.properties || {};
+function parseParams(
+  userArgs: string[],
+  selectedTool: Tool,
+  toolName: string,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  const schema =
+    (selectedTool.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {};
 
   // Find the start of parameters for the selected tool
   const toolNameIndex = userArgs.indexOf(toolName);
@@ -368,7 +326,7 @@ function parseParams(userArgs: string[], selectedTool: any, toolName: string): R
   }
 
   const paramArgs = userArgs.slice(toolNameIndex + 1);
-  const args: { key: string, value: string | boolean }[] = [];
+  const args: { key: string; value: string | boolean }[] = [];
 
   // Phase 1: Tokenize arguments into a structured list of key-value pairs
   for (let i = 0; i < paramArgs.length; i++) {
@@ -411,7 +369,7 @@ function parseParams(userArgs: string[], selectedTool: any, toolName: string): R
 
   // Phase 2: Parse and convert values based on the tool's inputSchema
   for (const { key, value } of args) {
-    const propSchema = schema[key];
+    const propSchema = schema[key] as { type?: string } | undefined;
 
     if (!propSchema) {
       // If no schema is found for this param, make a best effort to parse
@@ -439,14 +397,18 @@ function parseParams(userArgs: string[], selectedTool: any, toolName: string): R
       } else if (strValue === 'false') {
         params[key] = false;
       } else {
-        throw new Error(`Argument --${key} expects a boolean (true/false), but received "${value}".`);
+        throw new Error(
+          `Argument --${key} expects a boolean (true/false), but received "${value}".`,
+        );
       }
       continue;
     }
 
     // For all other types, a valueless flag is an error
     if (value === true) {
-      throw new Error(`Argument --${key} of type "${propSchema.type}" requires a value.`);
+      throw new Error(
+        `Argument --${key} of type "${propSchema.type ?? 'unknown'}" requires a value.`,
+      );
     }
 
     const strValue = value as string;
@@ -456,22 +418,27 @@ function parseParams(userArgs: string[], selectedTool: any, toolName: string): R
         params[key] = strValue;
         break;
       case 'number':
-      case 'integer':
+      case 'integer': {
         const num = Number(strValue);
         if (isNaN(num) || strValue.trim() === '') {
-          throw new Error(`Argument --${key} expects a ${propSchema.type}, but received "${strValue}".`);
+          throw new Error(
+            `Argument --${key} expects a ${propSchema.type}, but received "${strValue}".`,
+          );
         }
         if (propSchema.type === 'integer' && !Number.isInteger(num)) {
           throw new Error(`Argument --${key} expects an integer, but received "${strValue}".`);
         }
         params[key] = num;
         break;
+      }
       case 'array':
       case 'object':
         try {
           params[key] = JSON.parse(strValue);
         } catch (e) {
-          throw new Error(`Argument --${key} expects a valid JSON ${propSchema.type}. Parse error: ${e instanceof Error ? e.message : String(e)} on input: "${strValue}"`);
+          throw new Error(
+            `Argument --${key} expects a valid JSON ${propSchema.type}. Parse error: ${e instanceof Error ? e.message : String(e)} on input: "${strValue}"`,
+          );
         }
         break;
       case 'null':
@@ -493,88 +460,99 @@ function parseParams(userArgs: string[], selectedTool: any, toolName: string): R
   return params;
 }
 
-function extractContent(result: any): any {
+function extractContent(result: ToolCallResult): unknown {
   if (!result.content || result.content.length === 0) {
     return null;
   }
-  
+
   if (result.content.length === 1) {
     const item = result.content[0];
     if (item.type === 'text') {
       try {
-        return JSON.parse(item.text);
+        return JSON.parse(item.text ?? '') as unknown;
       } catch {
-        return item.text;
+        return item.text ?? '';
       }
     }
-    return item;
+    return JSON.stringify(item);
   }
-  
-  return result.content.map((item: any) => {
+
+  return result.content.map((item) => {
     if (item.type === 'text') {
       try {
-        return JSON.parse(item.text);
+        return JSON.parse(item.text ?? '') as unknown;
       } catch {
-        return item.text;
+        return item.text ?? '';
       }
     }
-    return item;
+    return JSON.stringify(item);
   });
 }
 
-function buildCommandString(actualCommand?: { command?: string, args?: string[], env?: Record<string, string> }): string {
+function buildCommandString(actualCommand?: {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}): string {
   if (!actualCommand?.command) {
     return 'node server.js';
   }
-  
-  const envStr = actualCommand.env && Object.keys(actualCommand.env).length > 0 
-    ? Object.entries(actualCommand.env).map(([k, v]) => `${k}=${v}`).join(' ') + ' '
-    : '';
-  const argsStr = actualCommand.args && actualCommand.args.length > 0 ? ' ' + actualCommand.args.join(' ') : '';
+
+  const envStr =
+    actualCommand.env && Object.keys(actualCommand.env).length > 0
+      ? Object.entries(actualCommand.env)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(' ') + ' '
+      : '';
+  const argsStr =
+    actualCommand.args && actualCommand.args.length > 0 ? ' ' + actualCommand.args.join(' ') : '';
   return `${envStr}${actualCommand.command}${argsStr}`;
 }
 
-function printToolHelp(tool: any, actualCommand?: { command?: string, args?: string[], env?: Record<string, string> }) {
+function printToolHelp(
+  tool: Tool,
+  actualCommand?: { command?: string; args?: string[]; env?: Record<string, string> },
+): void {
   console.log(`MCPLI Tool: ${tool.name}`);
   console.log('');
   if (tool.description) {
     console.log(`Description: ${tool.description}`);
     console.log('');
   }
-  
+
   console.log(`Usage: mcpli ${tool.name} [options] -- <mcp-server-command> [args...]`);
   console.log('');
-  
-  if (tool.inputSchema && tool.inputSchema.properties) {
+
+  if (tool.inputSchema?.properties) {
     console.log('Options:');
     const properties = tool.inputSchema.properties;
-    const required = tool.inputSchema.required || [];
-    
+    const required = tool.inputSchema.required ?? [];
+
     for (const [propName, propSchema] of Object.entries(properties)) {
-      const schema = propSchema as any;
-      const isRequired = required.includes(propName);
-      const type = schema.type || 'string';
-      const description = schema.description || '';
+      const schema = propSchema as Record<string, unknown>;
+      const isRequired = (required as string[]).includes(propName);
+      const type = (schema.type as string) ?? 'string';
+      const description = (schema.description as string) ?? '';
       const defaultValue = schema.default;
-      
+
       let line = `  --${propName.padEnd(20)}`;
       if (type) line += ` (${type})`;
       if (isRequired) line += ' [required]';
       if (description) line += ` ${description}`;
       if (defaultValue !== undefined) line += ` (default: ${JSON.stringify(defaultValue)})`;
-      
+
       console.log(line);
     }
     console.log('');
   }
-  
+
   console.log('Examples:');
   const exampleName = tool.name.replace(/_/g, '-');
   const commandStr = buildCommandString(actualCommand);
-  
+
   console.log(`  mcpli ${exampleName} --help -- ${commandStr}`);
-  
-  if (tool.inputSchema && tool.inputSchema.properties) {
+
+  if (tool.inputSchema?.properties) {
     const properties = Object.keys(tool.inputSchema.properties);
     if (properties.length > 0) {
       const firstProp = properties[0];
@@ -583,12 +561,16 @@ function printToolHelp(tool: any, actualCommand?: { command?: string, args?: str
   }
 }
 
-function printHelp(tools: any[], specificTool?: any, actualCommand?: { command?: string, args?: string[], env?: Record<string, string> }) {
+function printHelp(
+  tools: Tool[],
+  specificTool?: Tool,
+  actualCommand?: { command?: string; args?: string[]; env?: Record<string, string> },
+): void {
   if (specificTool) {
     printToolHelp(specificTool, actualCommand);
     return;
   }
-  
+
   console.log('MCPLI - Turn any MCP server into a first-class CLI tool');
   console.log('');
   console.log('Usage:');
@@ -603,22 +585,26 @@ function printHelp(tools: any[], specificTool?: any, actualCommand?: { command?:
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
   const config = getConfig();
-  console.log(`  --timeout=<seconds> Set daemon inactivity timeout (default: ${config.defaultTimeoutSeconds})`);
+  console.log(
+    `  --timeout=<seconds> Set daemon inactivity timeout (default: ${config.defaultTimeoutSeconds})`,
+  );
   console.log('');
-  
+
   if (tools.length > 0) {
     console.log('Available Tools:');
     for (const tool of tools) {
       const name = tool.name.replace(/_/g, '-');
-      const desc = tool.description || 'No description';
+      const desc = tool.description ?? 'No description';
       console.log(`  ${name.padEnd(20)} ${desc.slice(0, 60)}${desc.length > 60 ? '...' : ''}`);
     }
     console.log('');
     console.log('Tool Help:');
-    console.log(`  mcpli <tool> --help -- <mcp-server-command>    Show detailed help for specific tool`);
+    console.log(
+      `  mcpli <tool> --help -- <mcp-server-command>    Show detailed help for specific tool`,
+    );
     console.log('');
   }
-  
+
   console.log('Daemon Commands:');
   console.log('  daemon start   Start long-lived daemon process');
   console.log('  daemon stop    Stop daemon process');
@@ -627,10 +613,10 @@ function printHelp(tools: any[], specificTool?: any, actualCommand?: { command?:
   console.log('  daemon logs    Show daemon logs');
   console.log('  daemon clean   Clean up daemon files');
   console.log('');
-  
+
   if (tools.length > 0) {
     const commandStr = buildCommandString(actualCommand);
-    
+
     console.log('Examples:');
     console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --help -- ${commandStr}`);
     console.log(`  mcpli ${tools[0].name.replace(/_/g, '-')} --option value -- ${commandStr}`);
@@ -644,106 +630,142 @@ function printHelp(tools: any[], specificTool?: any, actualCommand?: { command?:
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   try {
     const result = parseArgs(process.argv);
     const { globals } = result;
-    
+
     if (globals.debug) {
-      console.error('[DEBUG] Parsed args:', result);
+      console.log('[DEBUG] Parsed args:', result);
     }
-    
+
     // Handle daemon subcommands
     if (globals.daemon) {
-      const { daemonCommand, daemonArgs } = result as any;
-      
+      const { daemonCommand, daemonArgs } = result as typeof result & {
+        daemonCommand?: string;
+        daemonArgs: string[];
+      };
+
       if (globals.help || !daemonCommand) {
         printDaemonHelp();
         return;
       }
-      
+
       const options = {
         debug: globals.debug,
-        logs: globals.logs || globals.verbose,
+        logs: globals.logs ?? globals.verbose,
         force: globals.force,
-        timeout: globals.timeout
+        timeout: getDaemonTimeoutMs(globals.timeout),
       };
-      
+
       switch (daemonCommand) {
-        case 'start':
+        case 'start': {
           const dashIndex = daemonArgs.indexOf('--');
           if (dashIndex === -1) {
             console.error('Error: Command required after -- for daemon start');
-            console.error('Usage: mcpli daemon start -- <command> [args...]');
+            console.error('Usage: mcpli daemon start -- [KEY=VALUE...] <command> [args...]');
             process.exit(1);
           }
-          const command = daemonArgs[dashIndex + 1];
-          const args = daemonArgs.slice(dashIndex + 2);
+          let spec;
+          try {
+            spec = parseCommandSpec(daemonArgs.slice(dashIndex + 1));
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`Error: ${msg}`);
+            process.exit(1);
+          }
+          const command = spec.command;
+          const args = spec.args;
+          const env = spec.env;
           if (!command) {
             console.error('Error: Command required after --');
             process.exit(1);
           }
-          await handleDaemonStart(command, args, options);
+          await handleDaemonStart(command, args, { ...options, env });
           break;
-          
-        case 'stop':
+        }
+
+        case 'stop': {
           const stopDashIndex = daemonArgs.indexOf('--');
           if (stopDashIndex !== -1) {
-            const stopCommand = daemonArgs[stopDashIndex + 1];
-            const stopArgs = daemonArgs.slice(stopDashIndex + 2);
-            await handleDaemonStop(stopCommand, stopArgs, options);
+            let spec;
+            try {
+              spec = parseCommandSpec(daemonArgs.slice(stopDashIndex + 1));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`Error: ${msg}`);
+              process.exit(1);
+            }
+            await handleDaemonStop(spec.command, spec.args, { ...options, env: spec.env });
           } else {
             await handleDaemonStop(undefined, [], options);
           }
           break;
-          
+        }
+
         case 'status':
           await handleDaemonStatus(options);
           break;
-          
-        case 'restart':
+
+        case 'restart': {
           const restartDashIndex = daemonArgs.indexOf('--');
           if (restartDashIndex !== -1) {
-            const restartCommand = daemonArgs[restartDashIndex + 1];
-            const restartArgs = daemonArgs.slice(restartDashIndex + 2);
-            await handleDaemonRestart(restartCommand, restartArgs, options);
+            let spec;
+            try {
+              spec = parseCommandSpec(daemonArgs.slice(restartDashIndex + 1));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`Error: ${msg}`);
+              process.exit(1);
+            }
+            await handleDaemonRestart(spec.command, spec.args, { ...options, env: spec.env });
           } else {
             await handleDaemonRestart(undefined, [], options);
           }
           break;
-          
-        case 'logs':
+        }
+
+        case 'logs': {
           await handleDaemonLogs(options);
           break;
-          
-        case 'clean':
+        }
+
+        case 'clean': {
           await handleDaemonClean(options);
           break;
-          
+        }
+
         default:
           console.error(`Error: Unknown daemon command: ${daemonCommand}`);
           console.error('Use "mcpli daemon --help" to see available commands');
           process.exit(1);
       }
-      
+
       return;
     }
-    
+
     // Regular tool execution mode
-    const { childCommand, childArgs, childEnv, userArgs } = result as any;
-    
+    const { childCommand, childArgs, childEnv, userArgs } = result;
+
     // No error for missing childCommand - we'll try daemon mode first
-    
+
     // Show help for regular mode
     if (globals.help) {
       if (childCommand) {
         // Get tools to show in help - always discover tools for root help
         try {
-          const { tools, close } = await discoverToolsEx(childCommand, childArgs, childEnv || {}, globals);
+          const { tools, close } = await discoverToolsEx(
+            childCommand,
+            childArgs,
+            childEnv ?? {},
+            globals,
+          );
           printHelp(tools, undefined, { command: childCommand, args: childArgs, env: childEnv });
           await close();
         } catch (error) {
-          console.error(`Error connecting to MCP server: ${error instanceof Error ? error.message : error}`);
+          console.error(
+            `Error connecting to MCP server: ${error instanceof Error ? error.message : error}`,
+          );
           console.error('Cannot show available tools. Please check your MCP server command.');
           printHelp([]);
         }
@@ -753,7 +775,7 @@ async function main() {
           const { tools, close } = await discoverToolsEx('', [], {}, globals);
           printHelp(tools);
           await close();
-        } catch (error) {
+        } catch {
           console.error('Error: No daemon running and MCP server command not provided');
           console.error('Usage: mcpli --help -- <mcp-server-command> [args...]');
           console.error('Example: mcpli --help -- node server.js');
@@ -762,38 +784,54 @@ async function main() {
       }
       return;
     }
-    
+
     if (globals.debug) {
-      console.error('[DEBUG] Tool execution mode:', { childCommand, childArgs, userArgs, env: childEnv || {} });
+      console.log('[DEBUG] Tool execution mode:', {
+        childCommand,
+        childArgs,
+        userArgs,
+        env: childEnv || {},
+      });
     }
-    
+
     // Discover tools
-    const { tools, client, daemonClient, isDaemon, close } = await discoverToolsEx(childCommand, childArgs, childEnv || {}, globals);
-    
+    const { tools, client, daemonClient, isDaemon, close } = await discoverToolsEx(
+      childCommand,
+      childArgs,
+      childEnv || {},
+      globals,
+    );
+
     if (globals.debug) {
-      console.error('[DEBUG] Found tools:', tools.map((t: any) => t.name));
-      console.error('[DEBUG] Using daemon:', isDaemon);
+      console.error(
+        '[DEBUG] Found tools:',
+        tools.map((t: Tool) => t.name),
+      );
+      console.log('[DEBUG] Using daemon:', isDaemon);
     }
-    
+
     // Show help if no tool specified
     if (userArgs.length === 0) {
       printHelp(tools, undefined, { command: childCommand, args: childArgs, env: childEnv });
       await close();
       return;
     }
-    
+
     // Find selected tool
     const toolResult = findTool(userArgs, tools);
     if (!toolResult) {
       console.error('Error: No tool specified or tool not found');
-      console.error('Available tools:', tools.map((t: any) => t.name.replace(/_/g, '-')).join(', '));
+      console.error(
+        'Available tools:',
+        tools.map((t: Tool) => t.name.replace(/_/g, '-')).join(', '),
+      );
       console.error('Use --help to see all available tools');
       await close();
       process.exit(1);
     }
-    
+
     const { tool: selectedTool, toolName } = toolResult;
-    
+
     // Check for tool-specific help
     const hasHelp = userArgs.some((arg: string) => arg === '--help' || arg === '-h');
     if (hasHelp) {
@@ -801,37 +839,37 @@ async function main() {
       await close();
       return;
     }
-    
+
     if (globals.debug) {
-      console.error('[DEBUG] Selected tool:', selectedTool.name);
-      console.error('[DEBUG] Tool name used:', toolName);
+      console.log('[DEBUG] Selected tool:', selectedTool.name);
+      console.log('[DEBUG] Tool name used:', toolName);
     }
-    
+
     // Parse parameters
     const params = parseParams(userArgs, selectedTool, toolName);
-    
+
     if (globals.debug) {
-      console.error('[DEBUG] Parameters:', params);
+      console.log('[DEBUG] Parameters:', params);
     }
-    
+
     // Execute tool using appropriate client
     let executionResult;
     if (isDaemon && daemonClient) {
       executionResult = await daemonClient.callTool({
         name: selectedTool.name,
-        arguments: params
+        arguments: params,
       });
     } else if (client) {
       executionResult = await client.callTool({
         name: selectedTool.name,
-        arguments: params
+        arguments: params,
       });
     } else {
       throw new Error('No client available for tool execution');
     }
-    
+
     await close();
-    
+
     // Output result
     if (globals.raw) {
       console.log(JSON.stringify(executionResult, null, 2));
@@ -845,7 +883,6 @@ async function main() {
         }
       }
     }
-    
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
