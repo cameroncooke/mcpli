@@ -71,7 +71,7 @@ Entry point:
 - src/mcpli.ts is the CLI entry point that parses arguments (including env variables for the server process), manages daemon subcommands, discovers tools, and executes calls.
 
 Important:
-- For normal execution, the server command is required after --. MCPLI will not auto‑select or auto‑start a daemon without an explicit server command. Daemon subcommands can operate without the server command, and help flows may query an already running daemon, but regular tool execution requires -- <command> [args...].
+- The server command is always required after -- for all tool execution. MCPLI does not support auto-selection of daemons or default daemon behavior. Every invocation must explicitly specify the MCP server command and arguments.
 
 
 ## 2) Configuration System
@@ -162,9 +162,16 @@ type CommandSpec = {
 
 Behavior:
 - The env in CommandSpec is used in:
-  - Daemon ID generation (see Section 3).
+  - Daemon ID generation (see Section 5).
   - Launching the MCP server (daemon wrapper and stateless fallback inherit process.env and merge CommandSpec env).
 - Only the env provided in CommandSpec participates in daemon ID hashing. Ambient process.env does not affect daemon identity.
+
+Note:
+- Only environment variables specified after -- as KEY=VALUE tokens (CommandSpec env) are considered for daemon identity.
+- Ambient shell environment variables (those set before invoking mcpli) do not affect daemon identity.
+  Example:
+    ENV_VAR=value mcpli tool -- node server.js        # same daemon as
+    mcpli tool -- node server.js
 
 
 ## 4) Parameter Parsing and Validation
@@ -244,6 +251,17 @@ Daemon identity:
 Implications:
 - Different env sets (e.g., different API keys or flags) produce different daemon IDs and thus separate daemons.
 - This allows safe reuse of a daemon only when command, args, and effective server env match.
+- Ambient shell environment does not affect daemon identity. Only KEY=VALUE tokens provided after -- are hashed.
+
+Example (different daemons due to CommandSpec env difference):
+  mcpli get-weather -- OPENAI_API_KEY=sk-live node weather-server.js
+  mcpli get-weather -- OPENAI_API_KEY=sk-test node weather-server.js
+  # These produce different daemon IDs.
+
+Example (same daemon, shell env not considered for identity):
+  OPENAI_API_KEY=sk-live mcpli get-weather -- node weather-server.js
+  mcpli get-weather -- node weather-server.js
+  # These reuse the same daemon (identity unaffected by shell env).
 
 Per‑daemon files:
 - Lock file: .mcpli/daemon-{id}.lock
@@ -270,11 +288,11 @@ MCPLI implements a sophisticated timeout system with three distinct timeout cate
 
 **Behavior**:
 - Timer resets on every IPC request (ping, listTools, callTool)
-- Implemented in daemon wrapper (src/daemon/wrapper.js)
+- Implemented in daemon wrapper (src/daemon/wrapper.ts)
 - Graceful shutdown with cleanup on timeout
 
 ```js
-// In wrapper.js
+// In wrapper.ts
 resetInactivityTimer() {
   if (this.inactivityTimeout) {
     clearTimeout(this.inactivityTimeout);
@@ -488,13 +506,13 @@ export async function cleanupAllStaleDaemons(cwd: string): Promise<void>
 ```
 
 ### Cross-Platform Considerations:
-- **Socket paths**: Unix domain sockets on Unix, named pipes on Windows
+- **Socket paths**: Unix domain sockets (primary platform support)
 - **Path normalization**: Forward slashes, case handling
 - **Process detection**: Platform-specific PID validation
 - **File locking**: Cross-platform proper-lockfile usage
 
 ### Legacy Compatibility:
-Supports legacy single-daemon paths (daemon.lock/daemon.sock) for backward compatibility and scenarios where no specific daemon ID is available.
+Supports legacy single-daemon paths (daemon.lock/daemon.sock) for backward compatibility with older installations.
 
 Per‑directory state lives under .mcpli:
 
@@ -525,14 +543,14 @@ Management utilities:
 - listAllDaemons(), cleanupAllStaleDaemons(): src/daemon/lock.ts
 
 Legacy paths:
-- Helpers accept undefined daemonId and fall back to legacy single‑daemon paths (daemon.lock/daemon.sock). This is primarily for compatibility and limited scenarios (e.g., querying when no command is supplied). Regular execution should always specify -- <command>.
+- Helpers accept undefined daemonId and fall back to legacy single‑daemon paths (daemon.lock/daemon.sock). This is primarily for backward compatibility with older lock file formats. All execution requires -- <command> specification.
 
 
 ## 11) Automatic Startup and Fallbacks
 
 Daemon auto‑start:
 - DaemonClient auto‑starts only when a server command is provided (after --).
-- Without a server command, MCPLI does not auto‑start any daemon and will not attempt to guess; it may only query an already running daemon (legacy default path) in limited flows such as help.
+- A server command is always required - MCPLI does not support querying existing daemons or default daemon selection.
 
 Fallback to stateless:
 - If daemon IPC calls fail and a server command exists, DaemonClient falls back to stateless execution:
@@ -657,47 +675,22 @@ MCPLI implements comprehensive error handling with graceful degradation and reco
 
 ## 14) Cross-Platform Considerations
 
-MCPLI is designed for cross-platform compatibility with specific handling for platform differences.
+MCPLI is designed primarily for Unix-like systems (macOS, Linux) with basic Windows compatibility for path normalization and environment handling.
 
 ### Path Normalization:
-- **Windows**: Convert backslashes to forward slashes, lowercase paths
-- **Case sensitivity**: Handle case-insensitive filesystems
-- **Path resolution**: Use absolute paths for daemon identity
-
-```ts
-function normalizeCommand(command: string, args?: string[]): {
-  command: string;
-  args: string[];
-} {
-  // Resolve to absolute path
-  const resolvedCommand = path.resolve(command);
-
-  // Platform-specific normalization
-  const normalizedCommand = process.platform === 'win32'
-    ? resolvedCommand.toLowerCase().replace(/\\/g, '/')
-    : resolvedCommand;
-
-  // Normalize args similarly
-  const normalizedArgs = args?.map(arg => /* normalize arg */) || [];
-
-  return { command: normalizedCommand, args: normalizedArgs };
-}
-```
+- **Absolute paths**: Use resolved absolute paths for daemon identity consistency
+- **Basic Windows support**: Convert backslashes to forward slashes and lowercase paths on Windows
+- **Path resolution**: Ensures stable daemon IDs across different working directories
 
 ### Environment Variable Handling:
-- **Windows**: Uppercase environment variable names for consistency
-- **Case sensitivity**: Handle case-insensitive env vars on Windows
-- **Key sorting**: Ensure stable hashing across platforms
+- **Key sorting**: Environment variables are sorted for stable hashing
+- **Windows case handling**: Environment variable names are uppercased on Windows for consistency
+- **Value filtering**: Undefined values are filtered out during environment processing
 
-### Process Management:
-- **PID validation**: Platform-specific process detection
-- **Socket creation**: Unix domain sockets vs named pipes
-- **Process spawning**: Detached process creation with platform-specific options
-
-### File System:
-- **Socket paths**: Handle platform-specific socket limitations
-- **File locking**: Use proper-lockfile for cross-platform file locking
-- **Directory creation**: Recursive directory creation with proper permissions
+### Process and File Management:
+- **PID validation**: Cross-platform process detection using process.kill(pid, 0)
+- **Unix domain sockets**: Uses Unix sockets for IPC (primary platform support)
+- **File locking**: Cross-platform file locking via proper-lockfile library
 
 ## 15) Key Components and Code References
 
@@ -739,7 +732,7 @@ Process spawner and testing harness:
   - InProcessDaemon: In‑process daemon used for development/testing.
 
 Daemon wrapper:
-- src/daemon/wrapper.js
+- src/daemon/wrapper.ts
   - MCPLIDaemon: Manages MCP client connection, IPC, inactivity timer, graceful shutdown, and env‑aware lock lifecycle (via acquireDaemonLockWithEnv).
 
 
@@ -768,7 +761,7 @@ Daemon wrapper:
 ## Operational Considerations
 
 - Server command requirement:
-  - For normal execution you must provide the server command after --. MCPLI does not auto‑select or auto‑start a daemon without it.
+  - The server command after -- is always required for all tool execution. MCPLI does not support default daemon behavior or auto-selection.
 - Inactivity timeout:
   - MCPLI_TIMEOUT (ms) or options.timeout controls auto‑shutdown (default 30 minutes).
   - Wrapper resets timer on every IPC request; on timeout it shuts down gracefully.
