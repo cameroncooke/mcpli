@@ -15,7 +15,6 @@ import {
   handleDaemonStop,
   handleDaemonStatus,
   handleDaemonRestart,
-  handleDaemonLogs,
   handleDaemonClean,
   printDaemonHelp,
 } from './daemon/index.ts';
@@ -704,7 +703,7 @@ async function main(): Promise<void> {
         }
 
         case 'status':
-          await handleDaemonStatus(options);
+          await handleDaemonStatus();
           break;
 
         case 'restart': {
@@ -722,11 +721,6 @@ async function main(): Promise<void> {
           } else {
             await handleDaemonRestart(undefined, [], options);
           }
-          break;
-        }
-
-        case 'logs': {
-          await handleDaemonLogs(options);
           break;
         }
 

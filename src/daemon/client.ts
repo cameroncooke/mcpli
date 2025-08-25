@@ -1,27 +1,31 @@
 import {
-  isDaemonRunning,
-  getDaemonInfo,
-  updateLastAccess,
-  generateDaemonIdWithEnv,
-  deriveIdentityEnv,
-} from './lock.ts';
-import {
   sendIPCRequest,
   generateRequestId,
-  testIPCConnection,
   ToolListResult,
   ToolCallResult,
   ToolCallParams,
 } from './ipc.ts';
-import { startDaemon, DaemonOptions } from './spawn.ts';
+import {
+  resolveOrchestrator,
+  computeDaemonId,
+  deriveIdentityEnv,
+  Orchestrator,
+} from './runtime.ts';
+import { getDaemonTimeoutMs } from '../config.ts';
 
-export interface DaemonClientOptions extends DaemonOptions {
+export interface DaemonClientOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+  debug?: boolean;
+  logs?: boolean;
+  timeout?: number;
   autoStart?: boolean;
   fallbackToStateless?: boolean;
 }
 
 export class DaemonClient {
   private daemonId?: string;
+  private orchestratorPromise: Promise<Orchestrator>;
 
   constructor(
     private command: string,
@@ -34,10 +38,13 @@ export class DaemonClient {
       ...options,
     };
 
-    // Compute daemonId only when we have a command (daemon discovery mode may not provide one)
+    // Resolve orchestrator (launchd-only architecture)
+    this.orchestratorPromise = resolveOrchestrator();
+
+    // Compute daemonId only when we have a command
     if (this.command?.trim()) {
-      const identityEnv = deriveIdentityEnv(this.options.env);
-      this.daemonId = generateDaemonIdWithEnv(this.command, this.args, identityEnv);
+      const identityEnv = deriveIdentityEnv(this.options.env ?? {});
+      this.daemonId = computeDaemonId(this.command, this.args, identityEnv);
     }
   }
 
@@ -73,67 +80,31 @@ export class DaemonClient {
 
   private async callDaemon(method: string, params?: ToolCallParams): Promise<unknown> {
     const cwd = this.options.cwd ?? process.cwd();
+    const orchestrator = await this.orchestratorPromise;
 
-    // Check if daemon is running (for this specific daemonId, if any)
-    const isRunning = await isDaemonRunning(cwd, this.daemonId);
-
-    if (!isRunning) {
-      if (this.options.autoStart && this.command) {
-        if (this.options.debug) {
-          console.log('[DEBUG] Starting daemon automatically');
-        }
-        await this.startDaemon();
-      } else {
-        throw new Error(
-          this.command
-            ? 'Daemon not running and auto-start disabled'
-            : 'No daemon running and no server command provided',
-        );
-      }
+    if (!this.command && !this.daemonId) {
+      throw new Error('No daemon identity available and no server command provided');
     }
 
-    // Get daemon info
-    const daemonInfo = await getDaemonInfo(cwd, this.daemonId);
-    if (!daemonInfo) {
-      throw new Error('Daemon info not available');
-    }
+    // Ensure launchd job/socket exist. Acts as auto-start for on-demand jobs.
+    const ensureRes = await orchestrator.ensure(this.command, this.args, {
+      cwd,
+      env: this.options.env ?? {},
+      debug: this.options.debug,
+      logs: this.options.logs,
+      timeoutMs: getDaemonTimeoutMs(this.options.timeout),
+      preferImmediateStart: true,
+    });
 
-    // Test connection
-    if (!(await testIPCConnection(daemonInfo))) {
-      throw new Error('Cannot connect to daemon IPC socket');
-    }
-
-    // Send request
     const request = {
       id: generateRequestId(),
       method: method as 'listTools' | 'callTool' | 'ping',
       params,
     };
 
-    const result = await sendIPCRequest(daemonInfo.socket, request);
-
-    // Update last access time
-    await updateLastAccess(cwd, this.daemonId);
-
+    // Single IPC request; no preflight ping
+    const result = await sendIPCRequest(ensureRes.socketPath, request);
     return result;
-  }
-
-  private async startDaemon(): Promise<void> {
-    try {
-      await startDaemon(this.command, this.args, { ...this.options });
-
-      // Wait a moment for daemon to be fully ready
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      if (this.options.debug) {
-        console.log('[DEBUG] Daemon started successfully');
-      }
-    } catch (error) {
-      if (this.options.debug) {
-        console.error('[DEBUG] Failed to start daemon:', error);
-      }
-      throw new Error(`Failed to start daemon: ${error instanceof Error ? error.message : error}`);
-    }
   }
 
   private async fallbackListTools(): Promise<ToolListResult> {
@@ -218,7 +189,6 @@ export class DaemonClient {
   }
 }
 
-// Convenience function for one-off operations
 export async function withDaemonClient<T>(
   command: string,
   args: string[],
