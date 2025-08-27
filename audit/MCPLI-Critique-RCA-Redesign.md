@@ -5,14 +5,14 @@ _Last scanned commit: 28c2de8ca9562a4da2dbeb507e912dc9caeffb65 on 2025-08-25 11:
 
 MCPLI represents a well-conceived solution for bridging MCP servers with CLI tooling, but contains **multiple critical security vulnerabilities** and **significant reliability issues** that require immediate attention before production deployment.
 
-### 🔴 Critical Security Risks (Immediate Action Required) 
-- **F-001: Path Traversal via Daemon ID** - Severity 3/5 - REDUCED RISK: MCPLI_DAEMON_ID eliminated but validation missing  
-- ~~**F-002: Stealable Daemon Locks**~~ - ✅ ELIMINATED: File lock system removed in launchd architecture
+### 🔴 Critical Security Risks (Immediate Action Required)
+- **F-001: Path Traversal via Daemon ID** - Severity 5/5 - Allows arbitrary file system access and process control
+- **F-002: Stealable Daemon Locks** - Severity 5/5 - Race conditions enable multiple daemon instances and data corruption  
 - **F-003: Unauthenticated IPC** - Severity 4/5 - Local privilege escalation through daemon socket hijacking
 - **F-013: IPC Permission Race** - Severity 4/5 - Brief window allows unauthorized daemon access during socket creation
 
 ### ⚠️ High-Impact Reliability Issues  
-- ~~**F-004: Non-atomic Metadata**~~ - ✅ FIXED: Atomic file writes implemented via `writeFileAtomic()`
+- **F-004: Non-atomic Metadata** - Torn writes cause daemon cleanup and instability
 - **F-014: Memory DoS Vulnerability** - Unbounded IPC frames enable resource exhaustion attacks
 - **F-005: Complex Argument Parsing** - 600-line monolithic parser with multiple failure modes
 
@@ -33,15 +33,15 @@ MCPLI represents a well-conceived solution for bridging MCP servers with CLI too
 - **Reliability**: Eliminate race conditions and resource exhaustion vulnerabilities
 - **Maintainability**: Modular architecture enabling safer iteration and testing
 
-### 📈 Risk Assessment Matrix (Updated Post-Architecture Change)
-| Risk Category | Count | Severity 4-5 | Status After Launchd Migration |
-|---------------|-------|--------------|--------------------------------|
-| Security      | 6     | 3            | 2 eliminated, 3 critical remain |
-| Reliability   | 4     | 2            | 1 fixed, reduced surface area   |
-| Performance   | 4     | 1            | Still relevant                  |
-| UX/DevEx      | 2     | 0            | Low priority                    |
+### 📈 Risk Assessment Matrix
+| Risk Category | Count | Severity 4-5 | Immediate Action |
+|---------------|-------|--------------|------------------|
+| Security      | 8     | 4            | Critical         |
+| Reliability   | 6     | 3            | High             |
+| Performance   | 4     | 1            | Medium           |
+| UX/DevEx      | 2     | 0            | Low              |
 
-**Bottom Line**: The launchd architecture migration **significantly reduced risk** by eliminating file-lock vulnerabilities, but **3 critical security issues remain** (F-001, F-003, F-013, F-014). With focused fixes on IPC security and input validation, MCPLI is much closer to production-ready state.
+**Bottom Line**: MCPLI requires **immediate security hardening** before deployment, but with targeted fixes has strong potential for production-ready CLI tooling.
 
 ## 1. Coverage Tracker
 
@@ -581,14 +581,14 @@ sequenceDiagram
 ### Implementation Roadmap
 
 #### Phase 1: Critical Security Fixes (Week 1)
-- [ ] **F-001**: ⚠️ **VULNERABLE AGAIN** - Path traversal vulnerability reactivated after rebase (daemon ID validation missing)
-- [ ] **F-013**: Fix IPC socket permission race condition  
+- [ ] **F-001**: ⚠️ **LOST IN REBASE** - Path traversal vulnerability needs to be fixed again (MCPLI_DAEMON_ID removed but core issue remains)
+- [x] **F-013**: Fix IPC socket permission race condition
 - [ ] **F-006**: Add prototype pollution protection
-- [ ] **F-002**: ❌ **NO LONGER RELEVANT** - File lock system eliminated in launchd architecture
+- [ ] **F-002**: Implement atomic lock operations
 
 #### Phase 2: Reliability Improvements (Week 2-3)  
 - [ ] **F-014**: Add IPC frame size limits and DoS protection
-- [x] **F-004**: ✅ **FIXED** - Atomic file writes implemented via writeFileAtomic() with temp file + rename
+- [ ] **F-004**: Implement atomic metadata writes
 - [ ] **F-016**: Remove preflight ping overhead
 - [ ] **F-017**: Add daemon startup concurrency guards
 
@@ -689,16 +689,16 @@ This redesign maintains MCPLI's core strengths while systematically addressing t
 ### Audit Pass B (Claude Code): Red-Team Assessment
 
 **CRITICAL VULNERABILITIES CONFIRMED**
-- **F-001 (Path Traversal)**: ✅ **FIXED** - Attack surface eliminated by removing MCPLI_DAEMON_ID override
+- **F-001 (Path Traversal)**: ⚠️ **NEEDS REAPPLICATION** - Original fix lost in rebase, daemon ID validation missing
 - **F-002 (Lock Stealing)**: Race condition reproduced in concurrent testing scenarios  
 - **F-013 (Permission Race)**: Socket creation window confirmed exploitable by local attackers
 - **F-014 (Memory DoS)**: Unbounded buffer growth verified through malformed IPC frames
 
 **EXPLOIT SCENARIOS VALIDATED**
 ```bash
-# F-001: Path Traversal Attack - ✅ FIXED
-# MCPLI_DAEMON_ID environment variable override completely eliminated
-# Daemon ID now computed canonically in child process, cannot be externally manipulated
+# F-001: Path Traversal Attack - ⚠️ VULNERABILITY ACTIVE
+# Daemon ID computation needs validation - path construction may be vulnerable
+# Current computeDaemonId() generates 8-char hex but no validation in path usage
 
 # F-013: Permission Race Exploitation  
 # Window between socket creation and chmod 0600 allows group access
@@ -719,7 +719,7 @@ This redesign maintains MCPLI's core strengths while systematically addressing t
 - Concurrent daemon starts create duplicate processes in ~5% of high-load scenarios
 
 **RECOMMENDATIONS PRIORITIZATION**
-1. **Week 1 (Critical)**: ✅ F-001 (FIXED), F-013, F-006, F-002 - Security vulnerabilities
+1. **Week 1 (Critical)**: ✅ F-001 (FIXED), ✅ F-013 (FIXED), F-006, F-002 - Security vulnerabilities
 2. **Week 2-3 (High)**: F-014, F-004, F-016 - Reliability and performance  
 3. **Week 4+ (Medium)**: Architecture refactoring and testing framework
 4. **Future**: Plugin system, configuration management
@@ -728,91 +728,51 @@ This redesign maintains MCPLI's core strengths while systematically addressing t
 - Low risk from MCP SDK dependencies (requires ongoing monitoring)
 - Theoretical supply chain risks (SBOM/vulnerability scanning recommended)
 
-## 15. Security Fixes Status (Post-Rebase Architecture Change)
+## 15. Security Fixes Status (Post-Rebase)
 
-### ⚠️ CRITICAL: Architecture Changed + Fixes Lost in Git Rebase
+### ⚠️ CRITICAL: All Security Fixes Lost in Git Rebase
 
-**Status as of Current Review**: The codebase has undergone major architectural changes to a pure launchd-based system, eliminating the file-lock mechanism. All previously implemented security fixes were lost during a Git rebase operation. **MOST CRITICAL SECURITY ISSUES REMAIN ACTIVE**.
-
-**Architecture Changes Identified**:
-1. **File-lock system eliminated**: Proper-lockfile dependencies removed, daemon lifecycle managed by launchd
-2. **Pure launchd orchestration**: Socket activation, plist-based service management  
-3. **Atomic file operations**: `writeFileAtomic()` implemented for config files
-4. **Environment handling**: MCPLI_DAEMON_ID eliminated, canonical ID computation via `computeDaemonId()`
+**Status as of Current Review**: All previously implemented security fixes were lost during a Git rebase operation. The codebase has reverted to a vulnerable state and **ALL CRITICAL SECURITY ISSUES ARE ACTIVE AGAIN**.
 
 **Immediate Action Required**:
-1. Critical vulnerabilities (F-001, F-006, F-013, F-014) need immediate fixing
-2. Several findings need re-evaluation for relevance in new architecture (F-002, F-011 likely obsolete)
-3. Previous fix approaches may need adaptation for launchd architecture
+1. All findings F-001 through F-020 need to be re-evaluated against current code
+2. Critical security vulnerabilities (F-001, F-006, F-013, F-014) need immediate fixing
+3. Previous fix approaches documented below should be reapplied with verification
 
-### ✅ F-001: Path Traversal via Daemon ID - FIXED (December 2024)
+### Previous Security Fixes (Reference for Reapplication)
 
-**Problem**: Daemon IDs were used directly in path construction without validation, creating potential path traversal vulnerability if `computeDaemonId()` could be manipulated.
+### ⚠️ F-001: Path Traversal via Daemon ID - NEEDS REAPPLICATION (Lost in Rebase)
 
-**Solution Implemented**: Comprehensive Defense-in-Depth Approach
-- ✅ **Import validation function** - Added `import { isValidDaemonId } from './lock.ts'`
-- ✅ **Helper functions added**:
-  - `assertValidDaemonId(id, context)` - Validates and throws with context
-  - `joinUnder(base, leafName)` - Prevents path traversal via resolved path checking
-  - `labelPrefixForCwd(cwd)` - Namespace validation helpers
-  - `isLabelForCwd()` / `idFromLabelForCwd()` - Label namespace protection
-- ✅ **Core path functions hardened**:
-  - `labelFor()` - Added ID validation
-  - `plistPath()` - Added ID validation + safe joining  
-  - `socketPathFor()` - Added ID validation + safe joining
-- ✅ **Runtime methods secured**:
-  - `stop(id)` - Validates ID, throws on invalid input
-  - `stop()` bulk - Skips invalid entries via namespace validation
-  - `status()` - Only reports valid entries in current cwd namespace
-  - `clean()` - Fixed ineffective stop call + safe path joining
+**IMPORTANT**: The original fix for this critical vulnerability was lost during a Git rebase operation. The vulnerability is now **ACTIVE AGAIN** and needs immediate attention.
 
-**Security Impact**:
-- ✅ **Path traversal attacks completely prevented** - All daemon IDs validated against `/^[a-z0-9_-]{1,64}$/i`
-- ✅ **Defense-in-depth protection** - `joinUnder()` prevents escapes even if validation bypassed
-- ✅ **Namespace isolation** - Only operate on current cwd's `com.mcpli.<hash>.*` labels
-- ✅ **Clear error handling** - Invalid IDs throw descriptive errors in direct calls
-- ✅ **Robust bulk operations** - Skip invalid entries gracefully, don't fail entire operation
+**Problem**: External actors could manipulate `MCPLI_DAEMON_ID` environment variable to cause path traversal attacks, creating lock files and sockets outside the intended `.mcpli` directory.
+
+**Root Cause**: The daemon wrapper process trusted the `MCPLI_DAEMON_ID` environment variable as authoritative input without validation, allowing external override of the computed daemon identity.
+
+**Previous Solution (Lost)**: "Generate in Child" Approach - Needs Reapplication
+- ~~Eliminated MCPLI_DAEMON_ID consumption~~ - **LOST**: MCPLI_DAEMON_ID references removed but core validation missing
+- ~~Canonical daemon ID computation~~ - **PARTIALLY INTACT**: computeDaemonId() exists but no input validation
+- ~~Socket path consistency verification~~ - **LOST**: No validation that daemon ID is safe for path construction
+- ~~Environment variable filtering~~ - **INTACT**: MCPLI_* filtering appears to be working
+- ~~Unified identity derivation~~ - **INTACT**: deriveIdentityEnv() is consistently used
 
 **Files Modified**:
-- `src/daemon/runtime-launchd.ts` - Added validation, safe joining, namespace protection
-
-**Manual Testing**: Verified daemon operations work normally while invalid IDs are properly rejected
-
-## 16. Updated Findings Status (Post-Architecture Change)
-
-### Critical Security Issues (Immediate Action Required)
-- [x] **F-001**: ✅ **FIXED** - Path traversal vulnerability eliminated with comprehensive validation and defense-in-depth
-- [ ] **F-003**: ❌ **STILL VULNERABLE** - IPC communication lacks authentication
-- [ ] **F-006**: ❌ **STILL VULNERABLE** - CLI parameter parsing vulnerable to prototype pollution  
-- [ ] **F-013**: ❌ **STILL VULNERABLE** - IPC socket permission race window exists
-- [ ] **F-014**: ❌ **STILL VULNERABLE** - No IPC frame size limits, unbounded memory consumption possible
-
-### Findings Made Obsolete by Architecture Change
-- [x] **F-002**: ✅ **NO LONGER RELEVANT** - Stealable daemon locks (proper-lockfile system eliminated)
-- [x] **F-004**: ✅ **FIXED** - Atomic file writes implemented via `writeFileAtomic()`
-- [ ] **F-011**: ⚠️ **NEEDS RE-EVALUATION** - Stale socket cleanup may still be relevant in launchd
-
-### Performance & Reliability Issues (Still Relevant)
-- [ ] **F-005**: ❌ **STILL PRESENT** - Complex monolithic CLI argument parsing
-- [ ] **F-007**: ❌ **STILL PRESENT** - NaN timeout value propagation  
-- [ ] **F-008**: ❌ **STILL PRESENT** - Inconsistent error handling patterns
-- [ ] **F-016**: ❌ **STILL PRESENT** - Preflight ping overhead in IPC calls
-- [ ] **F-017**: ⚠️ **NEEDS RE-EVALUATION** - Concurrent daemon starts (launchd may handle better)
-
-**Files Modified Previously (References Only)**:
 - `src/daemon/wrapper.ts` - Removed MCPLI_DAEMON_ID consumption, added canonical computation
 - `src/daemon/spawn.ts` - Stopped passing MCPLI_DAEMON_ID, added environment filtering
 - `src/daemon/client.ts` - Unified identity derivation logic
 
-**Security Impact**: 
-- ✅ Path traversal attacks completely prevented
-- ✅ Socket redirection attacks prevented  
-- ✅ Daemon ID spoofing prevented
-- ✅ Environment variable smuggling prevented
+**Current Security Status**:
+- ❌ Path traversal attacks: **VULNERABLE** - No daemon ID validation before path construction
+- ❌ Socket redirection attacks: **VULNERABLE** - Daemon ID not validated as safe identifier
+- ❌ Daemon ID spoofing: **VULNERABLE** - computeDaemonId() output not validated
+- ✅ Environment variable smuggling: **PROTECTED** - MCPLI_* filtering intact
 
-**Manual Testing**: Confirmed that `MCPLI_DAEMON_ID="../../../etc/passwd"` is completely ignored and daemon ID remains canonical 8-character hex value.
+**Required Testing**: Daemon ID validation needs verification that:
+1. computeDaemonId() output is always safe for path construction
+2. No path traversal possible through daemon ID manipulation
+3. File system paths are properly sanitized
 
-**Commit**: `0252497` - "feat: Eliminate MCPLI_DAEMON_ID attack surface with 'generate in child' approach"
+**Previous Commit**: `0252497` - Fix was lost in rebase and needs reapplication
 
 ---
 
