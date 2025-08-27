@@ -12,6 +12,59 @@ import {
   RuntimeStatus,
   deriveIdentityEnv,
 } from './runtime.ts';
+import { isValidDaemonId } from './lock.ts';
+
+/**
+ * Validate daemon id and throw if invalid, including context for diagnostics.
+ */
+function assertValidDaemonId(id: string, ctx: string): void {
+  if (!isValidDaemonId(id)) {
+    throw new Error(`Invalid daemon id (${ctx}): "${id}"`);
+  }
+}
+
+/**
+ * Safely join a leaf file name under a base directory, ensuring no path traversal.
+ * Note: We pass only validated leaf names without separators; this is defense-in-depth.
+ */
+function joinUnder(base: string, leafName: string): string {
+  const resolvedBase = path.resolve(base);
+  const joined = path.join(base, leafName);
+  const resolvedJoined = path.resolve(joined);
+  const prefix = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
+  if (!resolvedJoined.startsWith(prefix)) {
+    throw new Error(`Path traversal detected: "${leafName}"`);
+  }
+  return joined;
+}
+
+/**
+ * Compute the label namespace prefix for the current working directory.
+ * Format: "com.mcpli.<cwdHash>."
+ */
+function labelPrefixForCwd(cwd: string): string {
+  return `com.mcpli.${hashCwd(cwd)}.`;
+}
+
+/**
+ * Determine if a launchd label belongs to the current cwd's namespace and has a valid id.
+ */
+function isLabelForCwd(cwd: string, label: string): boolean {
+  const prefix = labelPrefixForCwd(cwd);
+  if (!label.startsWith(prefix)) return false;
+  const id = label.slice(prefix.length);
+  return isValidDaemonId(id);
+}
+
+/**
+ * Extract the daemon id from a label if it belongs to the cwd namespace and is valid.
+ */
+function idFromLabelForCwd(cwd: string, label: string): string | undefined {
+  const prefix = labelPrefixForCwd(cwd);
+  if (!label.startsWith(prefix)) return undefined;
+  const id = label.slice(prefix.length);
+  return isValidDaemonId(id) ? id : undefined;
+}
 
 /**
  * Compute a short, stable hash for a working directory to scope labels/socket roots.
@@ -102,6 +155,7 @@ function userLaunchdDomain(): string {
  * Label format: com.mcpli.<cwdHash>.<id>
  */
 function labelFor(cwd: string, id: string): string {
+  assertValidDaemonId(id, 'labelFor');
   return `com.mcpli.${hashCwd(cwd)}.${id}`;
 }
 
@@ -116,8 +170,9 @@ function plistDir(cwd: string): string {
  * Plist full path for a label.
  */
 function plistPath(cwd: string, id: string): string {
+  assertValidDaemonId(id, 'plistPath');
   const label = labelFor(cwd, id);
-  return path.join(plistDir(cwd), `${label}.plist`);
+  return joinUnder(plistDir(cwd), `${label}.plist`);
 }
 
 /**
@@ -132,7 +187,8 @@ function socketBase(cwd: string): string {
  * Full socket path for a daemon id.
  */
 function socketPathFor(cwd: string, id: string): string {
-  return path.join(socketBase(cwd), `${id}.sock`);
+  assertValidDaemonId(id, 'socketPathFor');
+  return joinUnder(socketBase(cwd), `${id}.sock`);
 }
 
 /**
@@ -416,6 +472,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
   async stop(id?: string): Promise<void> {
     const cwd = process.cwd();
     if (id) {
+      assertValidDaemonId(id, 'stop(id)');
       const label = this.labelFor(cwd, id);
       const pPath = this.plistPath(cwd, id);
       const sock = this.socketPathFor(cwd, id);
@@ -437,9 +494,12 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     for (const fname of entries) {
       if (!fname.endsWith('.plist')) continue;
       const label = fname.slice(0, -6); // strip .plist
-      const idPart = label.split('.').pop();
-      const idValue = idPart ?? '';
-      const pPath = path.join(plistDir(cwd), fname);
+      if (!isLabelForCwd(cwd, label)) {
+        // Skip entries that are not in our namespace or have invalid ids
+        continue;
+      }
+      const idValue = idFromLabelForCwd(cwd, label)!;
+      const pPath = joinUnder(plistDir(cwd), fname);
       const sock = this.socketPathFor(cwd, idValue);
 
       await bootoutLabel(label).catch(() => {});
@@ -464,8 +524,8 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     for (const fname of entries) {
       if (!fname.endsWith('.plist')) continue;
       const label = fname.slice(0, -6);
-      const parts = label.split('.');
-      const id = parts[parts.length - 1] || '';
+      if (!isLabelForCwd(cwd, label)) continue;
+      const id = idFromLabelForCwd(cwd, label)!;
       const socketPath = this.socketPathFor(cwd, id);
 
       const loaded = await isLoaded(label).catch(() => false);
@@ -499,7 +559,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
   async clean(): Promise<void> {
     const cwd = process.cwd();
     // Stop all first
-    await this.stop(cwd).catch(() => {});
+    await this.stop().catch(() => {});
 
     // Remove socket base directory if empty
     const base = socketBase(cwd);
@@ -507,7 +567,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       const files = await fs.readdir(base);
       for (const f of files) {
         if (f.endsWith('.sock')) {
-          await unlinkIfExists(path.join(base, f));
+          await unlinkIfExists(joinUnder(base, f));
         }
       }
       // attempt to remove the directory tree
@@ -524,7 +584,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       const files = await fs.readdir(pdir);
       for (const f of files) {
         if (f.endsWith('.plist')) {
-          await unlinkIfExists(path.join(pdir, f));
+          await unlinkIfExists(joinUnder(pdir, f));
         }
       }
       await fs.rmdir(pdir).catch(() => {});
