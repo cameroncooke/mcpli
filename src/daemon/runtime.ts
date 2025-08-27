@@ -19,7 +19,8 @@ export interface EnsureOptions {
   env?: Record<string, string>;
   debug?: boolean;
   logs?: boolean;
-  timeoutMs?: number;
+  timeout?: number; // seconds
+  timeoutMs?: number; // milliseconds (derived from timeout if not provided)
   /**
    * Hint to start the service immediately rather than lazily on first connection (if supported).
    */
@@ -95,17 +96,17 @@ export interface Orchestrator {
   /**
    * Stop a specific daemon by id, or all daemons under a given cwd if id is omitted.
    */
-  stop(cwd: string, id?: string): Promise<void>;
+  stop(id?: string): Promise<void>;
 
   /**
    * List orchestrator-managed daemons scoped to a working directory.
    */
-  status(cwd: string): Promise<RuntimeStatus[]>;
+  status(): Promise<RuntimeStatus[]>;
 
   /**
    * Clean up any orchestrator artifacts (plists, sockets, metadata) scoped to the working directory.
    */
-  clean(cwd: string): Promise<void>;
+  clean(): Promise<void>;
 }
 
 /**

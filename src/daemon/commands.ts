@@ -6,7 +6,6 @@ import {
 } from './runtime.ts';
 import fs from 'fs/promises';
 import path from 'path';
-import { getDaemonTimeoutMs } from '../config.ts';
 
 export interface DaemonCommandOptions {
   cwd?: string;
@@ -41,7 +40,7 @@ export async function handleDaemonStart(
       env: options.env ?? {},
       debug: options.debug,
       logs: options.logs,
-      timeoutMs: getDaemonTimeoutMs(options.timeout),
+      timeout: options.timeout, // Pass seconds, runtime will convert to ms
       preferImmediateStart: true,
     });
 

@@ -1,6 +1,6 @@
 # MCPLI Architecture
 
-MCPLI turns any MCP server into a first‑class CLI tool with a fast, seamless experience. It supports both stateless one‑off execution and long‑lived daemon processes that auto‑start when a server command is provided and are reused across invocations. This document explains the architecture and how each part works together with an emphasis on environment‑aware daemon isolation and current function signatures.
+MCPLI turns any MCP server into a first‑class CLI tool with a fast, seamless experience. It uses long‑lived daemon processes that auto‑start when a server command is provided and are reused across invocations for optimal performance. This document explains the architecture and how each part works together with an emphasis on environment‑aware daemon isolation and current function signatures.
 
 Contents:
 - [1) Overall Architecture](#1-overall-architecture)
@@ -59,10 +59,9 @@ Contents:
 MCPLI provides a CLI that:
 - Discovers available MCP tools from a given MCP server.
 - Parses CLI arguments into schema‑validated parameters (using the server’s tool inputSchema).
-- Executes tools either via a long‑lived daemon (preferred for speed) or statelessly (direct subprocess) when needed.
+- Executes tools via long‑lived daemon processes for optimal speed and performance.
 
-Two runtime modes:
-- Stateless mode: Directly starts an MCP server process via stdio, calls tools, then exits.
+Runtime mode:
 - Daemon mode: Starts a persistent wrapper that keeps a long‑lived MCP client connection; MCPLI communicates with it via IPC for fast, repeated calls.
 
 Entry point:
@@ -161,7 +160,7 @@ type CommandSpec = {
 Behavior:
 - The env in CommandSpec is used in:
   - Daemon ID generation (see Section 5).
-  - Launching the MCP server (daemon wrapper and stateless fallback inherit process.env and merge CommandSpec env).
+  - Launching the MCP server (daemon wrapper inherits process.env and merges CommandSpec env).
 - Only the env provided in CommandSpec participates in daemon ID hashing. Ambient process.env does not affect daemon identity.
 
 Note:
@@ -309,7 +308,7 @@ resetInactivityTimer() {
 **Behavior**:
 - Applied to each individual IPC request
 - Fast failure detection for crashed/hung daemons
-- Triggers fallback to stateless mode
+- Clear error reporting when daemon operations fail
 
 ### 3. CLI Operation Timeout
 **Purpose**: General CLI operation timeout (planned)
@@ -382,10 +381,9 @@ A typical invocation flows as follows:
 
 2) Tool discovery (src/mcpli.ts)
 - discoverToolsEx(command, args, env, options):
-  - Prefers daemon via DaemonClient.
+  - Uses DaemonClient for all tool operations.
   - If command is provided, DaemonClient auto‑starts the daemon on demand.
-  - If daemon communication fails and command exists, falls back to stateless execution (direct stdio) with env applied.
-  - If no command is provided (daemon‑only query scenarios like some help flows), MCPLI does not auto‑start any daemon.
+  - If no command is provided, throws an error as server command is required.
 
 3) Tool selection and parameter parsing
 - findTool(userArgs, tools): First non‑option token selects the tool (supports hyphen/underscore variations and normalized names).
@@ -548,20 +546,9 @@ Daemon auto‑start:
 - DaemonClient auto‑starts only when a server command is provided (after --).
 - A server command is always required - MCPLI does not support querying existing daemons or default daemon selection.
 
-Fallback to stateless:
-- If daemon IPC calls fail and a server command exists, DaemonClient falls back to stateless execution:
-  ```ts
-  const safeEnv = Object.fromEntries(
-    Object.entries(process.env).filter(([, v]) => v !== undefined)
-  ) as Record<string, string>;
-  const transport = new StdioClientTransport({
-    command: this.command,
-    args: this.args,
-    env: this.options.env ? { ...safeEnv, ...this.options.env } : undefined,
-    stderr: this.options.logs ? 'inherit' : 'ignore'
-  });
-  ```
-- The stateless path merges process.env (filtered) with the CommandSpec env for correct behavior matching the daemon path.
+Error handling:
+- If daemon IPC calls fail, DaemonClient throws an error with clear messaging about the failure.
+- No fallback mechanisms are used - daemon mode is required for all operations.
 
 
 ## 12) Help System and Tool Discovery
@@ -629,7 +616,7 @@ MCPLI implements comprehensive error handling with graceful degradation and reco
 ### Error Categories:
 
 1. **Daemon Connection Errors**:
-   - IPC timeout → Fallback to stateless
+   - IPC timeout → Clear error message and failure
    - Socket connection failure → Auto-restart attempt
    - Process crash detection → Automatic cleanup
 
@@ -699,7 +686,7 @@ High‑level CLI:
 
 Daemon management and client:
 - src/daemon/client.ts
-  - DaemonClient: IPC caller with env‑aware daemon IDs, auto‑start when command exists, and fallback to stateless.
+  - DaemonClient: IPC caller with env‑aware daemon IDs, auto‑start when command exists.
     - constructor(command, args, options?: DaemonClientOptions)
     - listTools(), callTool(params), ping()
   - withDaemonClient(): Helper for single‑operation flows.

@@ -6,7 +6,7 @@ This document provides practical, copy‑pasteable steps to manually verify MCPL
 - No duplicate spawning for the same command + args
 - Server command requirement enforcement (always requires `-- <command>`)
 - Multiple daemons coexisting (command‑specific isolation by hash)
-- Fallback to stateless mode when daemon IPC fails
+- Error handling when daemon operations fail
 - Command‑specific tests using the included servers:
   - weather-server.js
   - complex-test-server.js
@@ -247,9 +247,9 @@ Notes:
 
 ---
 
-## 7) Fallback to stateless mode (when daemon IPC fails)
+## 7) Error handling when daemon IPC fails
 
-MCPLI will fallback to direct stateless execution if daemon IPC fails (only when a server command is provided with `--`).
+MCPLI requires daemon mode for all operations. When daemon IPC fails, it provides clear error messages.
 
 Simulate broken IPC for the weather daemon:
 
@@ -269,28 +269,17 @@ Note the `Socket:` path for the weather daemon (e.g. `.mcpli/daemon-ab12cd34.soc
 rm -f .mcpli/daemon-*.sock
 ```
 
-
-3) Call a weather tool again with `--debug` and provide the server command (enables fallback path):
+3) Call a weather tool again with `--debug`:
 
 ```bash
 mcpli --debug --logs get-weather --location "Berlin" -- node weather-server.js
 ```
 
 Expected:
-- You should see debug output similar to:
-  - `[DEBUG] Daemon listTools failed, falling back to stateless:`
-- The command still succeeds because MCPLI connects directly to the MCP server in stateless mode.
+- The command fails with a clear error message about IPC communication failure
+- No fallback behavior occurs
 
-4) Check status again (IPC may show failed):
-
-```bash
-mcpli daemon status
-```
-
-Expected:
-- The weather daemon may still show "IPC connection: FAILED" (until restarted).
-
-5) Repair by restarting the daemon:
+4) Repair by restarting the daemon:
 
 ```bash
 mcpli daemon restart -- node weather-server.js
@@ -480,13 +469,13 @@ Test IPC connection timeout behavior.
 mcpli daemon start --debug -- node weather-server.js
 rm -f .mcpli/daemon-*.sock
 
-# Try to call tool with short debug timeout (should fallback to stateless)
+# Try to call tool with broken IPC (should show error)
 mcpli --debug get-weather --location "Berlin" -- node weather-server.js
 ```
 
 Expected:
-- Shows "Daemon callTool failed, falling back to stateless" message
-- Command still succeeds via stateless mode
+- Shows clear error message about daemon communication failure
+- Command fails without fallback
 
 ## 12) Cleanup scenario testing
 
@@ -606,7 +595,7 @@ mcpli --debug --help -- node -e "process.exit(1)"
 
 Expected:
 - Clear error messages about server startup failure
-- Fallback to stateless mode fails appropriately
+- Error handling works appropriately
 
 ### 13.3) Malformed daemon lock files
 
@@ -647,7 +636,7 @@ chmod 600 .mcpli/daemon-*.sock
 ```
 
 Expected:
-- Falls back to stateless mode with socket permission error
+- Provides clear error message for socket permission issues
 - Clear debug messages about IPC failure
 
 ## 14) Edge cases and concurrency
@@ -1152,5 +1141,5 @@ mcpli daemon clean
 
 - Add `--debug` for detailed diagnostics.
 - Add `--verbose` to show MCP server stderr/logs when convenient.
-- When testing fallback specifically, always provide the server command with `--` to enable stateless fallback.
+- When testing error handling, always provide the server command with `--` to enable proper daemon operations.
 - To produce daemon logs file, start with `--logs` (e.g., `mcpli daemon start --logs -- node weather-server.js`) and view with `mcpli daemon logs`.

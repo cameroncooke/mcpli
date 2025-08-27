@@ -11,7 +11,6 @@ import {
   deriveIdentityEnv,
   Orchestrator,
 } from './runtime.ts';
-import { getDaemonTimeoutMs } from '../config.ts';
 
 export interface DaemonClientOptions {
   cwd?: string;
@@ -20,7 +19,6 @@ export interface DaemonClientOptions {
   logs?: boolean;
   timeout?: number;
   autoStart?: boolean;
-  fallbackToStateless?: boolean;
 }
 
 export class DaemonClient {
@@ -34,7 +32,6 @@ export class DaemonClient {
   ) {
     this.options = {
       autoStart: true,
-      fallbackToStateless: true,
       ...options,
     };
 
@@ -49,33 +46,13 @@ export class DaemonClient {
   }
 
   async listTools(): Promise<ToolListResult> {
-    try {
-      const result = await this.callDaemon('listTools');
-      return result as ToolListResult;
-    } catch (error) {
-      if (this.options.fallbackToStateless) {
-        if (this.options.debug) {
-          console.log('[DEBUG] Daemon listTools failed, falling back to stateless:', error);
-        }
-        return this.fallbackListTools();
-      }
-      throw error;
-    }
+    const result = await this.callDaemon('listTools');
+    return result as ToolListResult;
   }
 
   async callTool(params: ToolCallParams): Promise<ToolCallResult> {
-    try {
-      const result = await this.callDaemon('callTool', params);
-      return result as ToolCallResult;
-    } catch (error) {
-      if (this.options.fallbackToStateless) {
-        if (this.options.debug) {
-          console.log('[DEBUG] Daemon callTool failed, falling back to stateless:', error);
-        }
-        return this.fallbackCallTool(params);
-      }
-      throw error;
-    }
+    const result = await this.callDaemon('callTool', params);
+    return result as ToolCallResult;
   }
 
   private async callDaemon(method: string, params?: ToolCallParams): Promise<unknown> {
@@ -87,14 +64,20 @@ export class DaemonClient {
     }
 
     // Ensure launchd job/socket exist. Acts as auto-start for on-demand jobs.
+    if (this.options.debug) {
+      console.time('[DEBUG] orchestrator.ensure');
+    }
     const ensureRes = await orchestrator.ensure(this.command, this.args, {
       cwd,
       env: this.options.env ?? {},
       debug: this.options.debug,
       logs: this.options.logs,
-      timeoutMs: getDaemonTimeoutMs(this.options.timeout),
-      preferImmediateStart: true,
+      timeout: this.options.timeout, // Pass seconds, commands.ts will convert to ms
+      preferImmediateStart: false, // Don't restart daemon if already running
     });
+    if (this.options.debug) {
+      console.timeEnd('[DEBUG] orchestrator.ensure');
+    }
 
     const request = {
       id: generateRequestId(),
@@ -103,80 +86,14 @@ export class DaemonClient {
     };
 
     // Single IPC request; no preflight ping
+    if (this.options.debug) {
+      console.time('[DEBUG] IPC request');
+    }
     const result = await sendIPCRequest(ensureRes.socketPath, request);
+    if (this.options.debug) {
+      console.timeEnd('[DEBUG] IPC request');
+    }
     return result;
-  }
-
-  private async fallbackListTools(): Promise<ToolListResult> {
-    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-
-    const safeEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined),
-    ) as Record<string, string>;
-
-    const transport = new StdioClientTransport({
-      command: this.command,
-      args: this.args,
-      env: this.options.env ? { ...safeEnv, ...this.options.env } : undefined,
-      stderr: this.options.logs ? 'inherit' : 'ignore',
-    });
-
-    const client = new Client(
-      {
-        name: 'mcpli',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {},
-      },
-    );
-
-    try {
-      await client.connect(transport);
-      const result = await client.listTools();
-      await client.close();
-      return result;
-    } catch (error) {
-      await client.close();
-      throw error;
-    }
-  }
-
-  private async fallbackCallTool(params: ToolCallParams): Promise<ToolCallResult> {
-    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-
-    const safeEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined),
-    ) as Record<string, string>;
-
-    const transport = new StdioClientTransport({
-      command: this.command,
-      args: this.args,
-      env: this.options.env ? { ...safeEnv, ...this.options.env } : undefined,
-      stderr: this.options.logs ? 'inherit' : 'ignore',
-    });
-
-    const client = new Client(
-      {
-        name: 'mcpli',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {},
-      },
-    );
-
-    try {
-      await client.connect(transport);
-      const result = await client.callTool(params);
-      await client.close();
-      return result;
-    } catch (error) {
-      await client.close();
-      throw error;
-    }
   }
 
   async ping(): Promise<boolean> {

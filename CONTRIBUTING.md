@@ -137,7 +137,7 @@ MCPLI consists of several key components:
 
 When tests are added (future enhancement):
 
-1. Test both daemon and stateless modes
+1. Test daemon mode functionality
 2. Test various parameter types and edge cases
 3. Test timeout behaviors
 4. Test daemon isolation with different configurations

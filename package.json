@@ -38,7 +38,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.3",
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "socket-activation": "^3.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.23.0",
