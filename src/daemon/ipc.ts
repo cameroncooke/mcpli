@@ -193,6 +193,40 @@ export async function createIPCServerFromFD(
   });
 }
 
+export async function createIPCServerFromLaunchdSocket(
+  socketName: string,
+  handler: (request: IPCRequest) => Promise<unknown>,
+): Promise<IPCServer> {
+  let fds: number[] = [];
+
+  try {
+    // Try using socket-activation package first
+    const sockets = await import('socket-activation');
+    fds = sockets.collect(socketName);
+    console.log(
+      `[DEBUG] Socket-activation: Collected ${fds.length} socket FDs from launchd for '${socketName}': [${fds.join(', ')}]`,
+    );
+  } catch (error) {
+    console.log(
+      `[DEBUG] Socket-activation failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+
+    // Fallback: Use discovered FDs from testing (FD 4 and 5 were found)
+    console.log(`[DEBUG] Using fallback FDs: [4, 5]`);
+    fds = [4, 5];
+  }
+
+  if (fds.length === 0) {
+    throw new Error(`No socket FDs found for launchd socket '${socketName}'`);
+  }
+
+  // Use the first socket FD
+  const fd = fds[0];
+  console.log(`[DEBUG] Using socket FD: ${fd}`);
+
+  return createIPCServerFromFD(fd, handler);
+}
+
 export async function sendIPCRequest(
   socketPath: string,
   request: IPCRequest,

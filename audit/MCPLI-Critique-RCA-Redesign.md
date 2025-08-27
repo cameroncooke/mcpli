@@ -24,7 +24,7 @@ MCPLI represents a well-conceived solution for bridging MCP servers with CLI too
 ### ✅ Architectural Strengths
 - **Sophisticated Environment Hashing** for daemon identity isolation
 - **TypeScript Strict Mode** with comprehensive ESLint rules  
-- **Graceful Fallback** from daemon to stateless execution
+- **Robust Error Handling** for daemon operation failures
 - **Unix Socket Security Model** with restrictive file permissions
 
 ### 🎯 Projected Wins from Remediation
@@ -63,7 +63,7 @@ MCPLI represents a well-conceived solution for bridging MCP servers with CLI too
 ### ✅ Architectural Strengths
 - **Environment-Aware Daemon Hashing**: Sophisticated daemon identity system using SHA-256 of normalized command+args+env
 - **TypeScript Strict Mode**: Complete type safety with `no-explicit-any` and strict ESLint rules
-- **Graceful Degradation**: Automatic fallback from daemon to stateless mode on IPC failure
+- **Clear Error Reporting**: Informative error messages when daemon operations fail
 - **Socket Security**: Restrictive 0600 permissions on Unix domain sockets
 
 ### ⚠️ Design Pattern Issues
@@ -609,7 +609,7 @@ sequenceDiagram
 #### Backwards Compatibility
 - Maintain existing CLI interface and command structure
 - Preserve daemon file formats during transition
-- Support graceful fallback to stateless mode
+- Support clear error handling for daemon failures
 
 #### Rollout Plan
 1. **Canary Deployment**: Deploy security fixes to limited subset

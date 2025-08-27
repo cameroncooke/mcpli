@@ -153,9 +153,18 @@ function buildPlistXml(spec: {
   socketNameKey: string; // environment key (e.g., MCPLI_SOCKET)
   socketPath: string;
   logsPath?: string;
+  machServices?: string[];
 }): string {
-  const { label, programArguments, workingDirectory, env, socketNameKey, socketPath, logsPath } =
-    spec;
+  const {
+    label,
+    programArguments,
+    workingDirectory,
+    env,
+    socketNameKey,
+    socketPath,
+    logsPath,
+    machServices,
+  } = spec;
 
   const envEntries = Object.entries(env);
   const progArgsXml = programArguments
@@ -193,6 +202,15 @@ ${envEntries
   <string>${xmlEscape(logsPath)}</string>`
     : '';
 
+  const machServicesXml =
+    machServices && machServices.length > 0
+      ? `
+  <key>MachServices</key>
+  <dict>
+${machServices.map((name) => `    <key>${xmlEscape(name)}</key>\n    <true/>`).join('\n')}
+  </dict>`
+      : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -207,9 +225,12 @@ ${progArgsXml}
   <string>${xmlEscape(workingDirectory)}</string>${envXml}
 ${socketsXml}
   <key>KeepAlive</key>
-  <false/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>ProcessType</key>
-  <string>Background</string>${logsXml}
+  <string>Background</string>${logsXml}${machServicesXml}
 </dict>
 </plist>`;
 }
@@ -314,7 +335,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
   async ensure(command: string, args: string[], opts: EnsureOptions): Promise<EnsureResult> {
     const cwd = opts.cwd ?? process.cwd();
     const identityEnv = deriveIdentityEnv(opts.env ?? {});
-    const id = this.computeId(command, args, identityEnv, cwd);
+    const id = this.computeId(command, args, identityEnv);
     const label = this.labelFor(cwd, id);
     const socketPath = this.socketPathFor(cwd, id);
 
@@ -325,7 +346,11 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
 
     // Build ProgramArguments
     const nodeExec = process.execPath; // absolute path to Node
-    const wrapperPath = path.join(path.dirname(new URL(import.meta.url).pathname), 'wrapper.js');
+    const wrapperPath = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      'daemon',
+      'wrapper.js',
+    );
 
     // Build environment for wrapper
     const logsPath = opts.logs ? path.join(cwd, '.mcpli', 'daemon.log') : undefined;
@@ -337,7 +362,11 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       MCPLI_DEBUG: opts.debug ? '1' : '0',
       MCPLI_LOGS: opts.logs ? '1' : '0',
       MCPLI_TIMEOUT: String(
-        typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs) ? opts.timeoutMs : 1800000,
+        typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs)
+          ? opts.timeoutMs
+          : typeof opts.timeout === 'number' && !isNaN(opts.timeout)
+            ? opts.timeout * 1000
+            : 1800000,
       ),
       MCPLI_COMMAND: command,
       MCPLI_ARGS: JSON.stringify(args),
@@ -354,6 +383,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       socketNameKey: 'MCPLI_SOCKET',
       socketPath,
       logsPath,
+      // Remove machServices - not needed for socket activation
     });
 
     const pPath = this.plistPath(cwd, id);

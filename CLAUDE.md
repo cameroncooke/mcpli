@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-MCPLI is a TypeScript CLI tool that transforms stdio-based MCP (Model Context Protocol) servers into first-class command-line tools. It maintains persistent daemon processes for fast, stateful tool execution while supporting fallback to stateless mode.
+MCPLI is a TypeScript CLI tool that transforms stdio-based MCP (Model Context Protocol) servers into first-class command-line tools. It maintains persistent daemon processes for fast, stateful tool execution.
 
 ## Key Architecture Principles
 
@@ -88,7 +88,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 - **Timeout Units**: Seconds for CLI (user-facing), milliseconds for internal IPC
 
 ### Error Handling
-- **Graceful Degradation**: Falls back to stateless mode if daemon fails
+- **Robust Error Handling**: Provides clear error messages when daemon operations fail
 - **Process Recovery**: Automatic cleanup of stale processes and lock files
 - **User-Friendly Messages**: Clear error reporting with actionable guidance
 
@@ -117,6 +117,6 @@ The argument parsing in `src/mcpli.ts` handles the complex `-- <server-command>`
 - **Use provided test servers** instead of external dependencies
 - **Test daemon lifecycle** including creation, communication, and cleanup
 - **Verify environment variable behavior** matches architectural expectations
-- **Test both daemon and stateless modes** for all tool operations
+- **Test daemon mode** for all tool operations
 
 This codebase emphasizes reliability, performance, and clean separation between CLI interface and MCP server execution while maintaining backward compatibility and robust error handling.

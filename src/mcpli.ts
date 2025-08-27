@@ -3,11 +3,9 @@
 /**
  * MCPLI - Turn any MCP server into a first-class CLI tool
  *
- * This version supports both stateless mode and long-lived daemon processes.
+ * This version uses long-lived daemon processes for all tool execution.
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { DaemonClient } from './daemon/index.ts';
 import { Tool, ToolCallResult } from './daemon/ipc.ts';
 import {
@@ -18,7 +16,7 @@ import {
   handleDaemonClean,
   printDaemonHelp,
 } from './daemon/index.ts';
-import { getConfig, getDaemonTimeoutMs } from './config.ts';
+import { getConfig } from './config.ts';
 
 interface GlobalOptions {
   help?: boolean;
@@ -206,7 +204,7 @@ function parseArgs(argv: string[]): {
 }
 
 // -----------------------------------------------------------------------------
-// Env-aware tool discovery (daemon + stateless fallback)
+// Env-aware tool discovery (daemon mode)
 // -----------------------------------------------------------------------------
 async function discoverToolsEx(
   command: string,
@@ -215,67 +213,27 @@ async function discoverToolsEx(
   options: GlobalOptions,
 ): Promise<{
   tools: Tool[];
-  daemonClient?: DaemonClient;
-  client?: Client;
-  isDaemon: boolean;
+  daemonClient: DaemonClient;
   close: () => Promise<void>;
 }> {
-  // If no command provided, only try daemon mode
-  const daemonOnly = !command;
+  if (!command) {
+    throw new Error('Server command is required');
+  }
 
-  // Prefer daemon client
   const daemonClient = new DaemonClient(command, args, {
     logs: options.logs ?? options.verbose,
     debug: options.debug,
-    timeout: getDaemonTimeoutMs(options.timeout),
-    autoStart: !!command,
-    fallbackToStateless: !daemonOnly,
+    timeout: options.timeout, // Pass timeout in seconds, let DaemonClient handle conversion
+    autoStart: true,
     env,
   });
 
-  try {
-    const result = await daemonClient.listTools();
-    return {
-      tools: result.tools || [],
-      daemonClient,
-      isDaemon: true,
-      close: () => Promise.resolve(),
-    };
-  } catch (error) {
-    if (daemonOnly) throw error;
-
-    if (options.debug) {
-      console.log('[DEBUG] Daemon failed, using direct connection:', error);
-    }
-
-    const safeEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined),
-    ) as Record<string, string>;
-
-    const transport = new StdioClientTransport({
-      command,
-      args,
-      env: Object.keys(env || {}).length ? { ...safeEnv, ...env } : undefined,
-      stderr: options.logs || options.verbose ? 'inherit' : 'ignore',
-    });
-
-    const client = new Client({ name: 'mcpli', version: '1.0.0' }, { capabilities: {} });
-
-    try {
-      await client.connect(transport);
-      const result = await client.listTools();
-      return {
-        tools: result.tools || [],
-        client,
-        isDaemon: false,
-        close: () => client.close(),
-      };
-    } catch (error) {
-      throw new Error(
-        `Failed to connect to MCP server: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-  }
+  const result = await daemonClient.listTools();
+  return {
+    tools: result.tools || [],
+    daemonClient,
+    close: () => Promise.resolve(),
+  };
 }
 
 function normalizeToolName(name: string): string {
@@ -654,7 +612,7 @@ async function main(): Promise<void> {
         debug: globals.debug,
         logs: globals.logs ?? globals.verbose,
         force: globals.force,
-        timeout: getDaemonTimeoutMs(globals.timeout),
+        timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
       };
 
       switch (daemonCommand) {
@@ -789,19 +747,25 @@ async function main(): Promise<void> {
     }
 
     // Discover tools
-    const { tools, client, daemonClient, isDaemon, close } = await discoverToolsEx(
+    if (globals.debug) {
+      console.time('[DEBUG] Daemon connection & tool discovery');
+    }
+    const { tools, daemonClient, close } = await discoverToolsEx(
       childCommand,
       childArgs,
       childEnv || {},
       globals,
     );
+    if (globals.debug) {
+      console.timeEnd('[DEBUG] Daemon connection & tool discovery');
+    }
 
     if (globals.debug) {
       console.error(
         '[DEBUG] Found tools:',
         tools.map((t: Tool) => t.name),
       );
-      console.log('[DEBUG] Using daemon:', isDaemon);
+      console.log('[DEBUG] Using daemon: true');
     }
 
     // Show help if no tool specified
@@ -844,25 +808,25 @@ async function main(): Promise<void> {
 
     if (globals.debug) {
       console.log('[DEBUG] Parameters:', params);
+      console.time('[DEBUG] Tool execution');
     }
 
-    // Execute tool using appropriate client
-    let executionResult;
-    if (isDaemon && daemonClient) {
-      executionResult = await daemonClient.callTool({
-        name: selectedTool.name,
-        arguments: params,
-      });
-    } else if (client) {
-      executionResult = await client.callTool({
-        name: selectedTool.name,
-        arguments: params,
-      });
-    } else {
-      throw new Error('No client available for tool execution');
+    // Execute tool using daemon client
+    const executionResult = await daemonClient.callTool({
+      name: selectedTool.name,
+      arguments: params,
+    });
+
+    if (globals.debug) {
+      console.timeEnd('[DEBUG] Tool execution');
+      console.time('[DEBUG] Cleanup');
     }
 
     await close();
+
+    if (globals.debug) {
+      console.timeEnd('[DEBUG] Cleanup');
+    }
 
     // Output result
     if (globals.raw) {
