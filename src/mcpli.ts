@@ -17,6 +17,7 @@ import {
   printDaemonHelp,
 } from './daemon/index.ts';
 import { getConfig } from './config.ts';
+import { isUnsafeKey, safeEmptyRecord, safeDefine, deepSanitize } from './utils/safety.ts';
 
 interface GlobalOptions {
   help?: boolean;
@@ -41,7 +42,7 @@ type CommandSpec = {
 };
 
 function parseCommandSpec(tokens: string[]): CommandSpec {
-  const env: Record<string, string> = {};
+  const env = safeEmptyRecord<string>();
   let i = 0;
   const envPattern = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
@@ -50,7 +51,10 @@ function parseCommandSpec(tokens: string[]): CommandSpec {
     if (match) {
       const key = match[1];
       const value = match[2];
-      env[key] = value;
+      if (isUnsafeKey(key)) {
+        throw new Error(`Unsafe environment variable name "${key}" is not allowed.`);
+      }
+      safeDefine(env as unknown as Record<string, unknown>, key, value);
       i++;
       continue;
     }
@@ -156,7 +160,7 @@ function parseArgs(argv: string[]): {
 
   // Parse everything after --
   const afterDash = args.slice(dashIndex + 1);
-  let childEnv: Record<string, string> = {};
+  let childEnv: Record<string, string> = safeEmptyRecord<string>();
   let childCommand = '';
   let childArgs: string[] = [];
 
@@ -271,7 +275,7 @@ function parseParams(
   selectedTool: Tool,
   toolName: string,
 ): Record<string, unknown> {
-  const params: Record<string, unknown> = {};
+  const params = safeEmptyRecord<unknown>();
   const schema =
     (selectedTool.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {};
 
@@ -319,6 +323,9 @@ function parseParams(
     }
 
     if (key !== undefined && value !== undefined) {
+      if (isUnsafeKey(key)) {
+        throw new Error(`Unsafe parameter name "${key}" is not allowed.`);
+      }
       args.push({ key, value });
     }
     // Non-option arguments (positional) are ignored for now
@@ -331,12 +338,13 @@ function parseParams(
     if (!propSchema) {
       // If no schema is found for this param, make a best effort to parse
       if (value === true) {
-        params[key] = true;
+        safeDefine(params, key, true);
       } else {
         try {
-          params[key] = JSON.parse(value as string);
+          const parsed: unknown = JSON.parse(value as string);
+          safeDefine(params, key, deepSanitize(parsed));
         } catch {
-          params[key] = value;
+          safeDefine(params, key, value);
         }
       }
       continue;
@@ -345,14 +353,14 @@ function parseParams(
     // Handle boolean type specifically, as it can be a flag or have a value
     if (propSchema.type === 'boolean') {
       if (value === true) {
-        params[key] = true;
+        safeDefine(params, key, true);
         continue;
       }
       const strValue = String(value).toLowerCase();
       if (strValue === 'true') {
-        params[key] = true;
+        safeDefine(params, key, true);
       } else if (strValue === 'false') {
-        params[key] = false;
+        safeDefine(params, key, false);
       } else {
         throw new Error(
           `Argument --${key} expects a boolean (true/false), but received "${value}".`,
@@ -372,7 +380,7 @@ function parseParams(
 
     switch (propSchema.type) {
       case 'string':
-        params[key] = strValue;
+        safeDefine(params, key, strValue);
         break;
       case 'number':
       case 'integer': {
@@ -385,13 +393,14 @@ function parseParams(
         if (propSchema.type === 'integer' && !Number.isInteger(num)) {
           throw new Error(`Argument --${key} expects an integer, but received "${strValue}".`);
         }
-        params[key] = num;
+        safeDefine(params, key, num);
         break;
       }
       case 'array':
       case 'object':
         try {
-          params[key] = JSON.parse(strValue);
+          const parsed: unknown = JSON.parse(strValue);
+          safeDefine(params, key, deepSanitize(parsed));
         } catch (e) {
           throw new Error(
             `Argument --${key} expects a valid JSON ${propSchema.type}. Parse error: ${e instanceof Error ? e.message : String(e)} on input: "${strValue}"`,
@@ -402,14 +411,15 @@ function parseParams(
         if (strValue.toLowerCase() !== 'null') {
           throw new Error(`Argument --${key} expects null, but received "${strValue}".`);
         }
-        params[key] = null;
+        safeDefine(params, key, null);
         break;
       default:
         // Fallback for schemas with anyOf, oneOf, or no type property.
         try {
-          params[key] = JSON.parse(strValue);
+          const parsed: unknown = JSON.parse(strValue);
+          safeDefine(params, key, deepSanitize(parsed));
         } catch {
-          params[key] = strValue;
+          safeDefine(params, key, strValue);
         }
     }
   }

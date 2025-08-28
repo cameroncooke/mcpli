@@ -730,14 +730,45 @@ This redesign maintains MCPLI's core strengths while systematically addressing t
 
 ## 15. Security Fixes Status (Post-Rebase)
 
-### ⚠️ CRITICAL: All Security Fixes Lost in Git Rebase
+### ✅ F-006: Prototype Pollution Risk - FIXED
 
-**Status as of Current Review**: All previously implemented security fixes were lost during a Git rebase operation. The codebase has reverted to a vulnerable state and **ALL CRITICAL SECURITY ISSUES ARE ACTIVE AGAIN**.
+**Status**: ✅ **RESOLVED** - Implemented comprehensive protection against prototype pollution attacks
+
+**Implementation Summary**:
+- **Safety Utilities Module**: Created `src/utils/safety.ts` with null-prototype object helpers and dangerous key validation
+- **Primary Fix**: All parameter parsing now uses `Object.create(null)` via `safeEmptyRecord()`
+- **Dangerous Key Blocking**: Rejects `__proto__`, `prototype`, and `constructor` parameters and environment variables
+- **Deep Sanitization**: Recursively removes dangerous keys from nested JSON objects
+- **Comprehensive Coverage**: Fixed `parseParams`, `parseCommandSpec`, and `parseArgs` functions
+
+**Files Modified**:
+- `src/utils/safety.ts` - New safety utilities for secure object handling
+- `src/mcpli.ts` - All vulnerable parameter parsing functions hardened
+
+**Security Verification**:
+- ✅ Direct `--__proto__` attacks blocked with clear error message
+- ✅ Environment variable `__proto__` attacks blocked
+- ✅ Nested JSON dangerous key attacks sanitized
+- ✅ `Object.prototype` remains unpolluted after all attack attempts
+- ✅ Normal CLI functionality preserved
+
+**Attack Vectors Eliminated**:
+1. **F-006a**: Direct CLI parameter pollution (`--__proto__.evil=true`)
+2. **F-006b**: Environment variable pollution (`__proto__=evil`)
+3. **F-006c**: Nested JSON pollution (`--data='{"__proto__":{"polluted":true}}'`)
+4. **F-006d**: Alternative dangerous keys (`--prototype`, `--constructor`)
+
+**Commit Ready**: Implementation complete with comprehensive testing
+
+### ⚠️ CRITICAL: Remaining Vulnerabilities Need Immediate Attention
+
+**Status as of Current Review**: Other critical security fixes were lost during a Git rebase operation and **REMAIN ACTIVE**.
 
 **Immediate Action Required**:
-1. All findings F-001 through F-020 need to be re-evaluated against current code
-2. Critical security vulnerabilities (F-001, F-006, F-013, F-014) need immediate fixing
-3. Previous fix approaches documented below should be reapplied with verification
+1. **F-001**: Path Traversal via Daemon ID - **CRITICAL** - Needs reapplication
+2. **F-013**: IPC Socket Permission Race - **HIGH** - Socket creation vulnerability
+3. **F-014**: Unbounded IPC Frame Size - **HIGH** - Memory DoS vulnerability
+4. All other findings F-007 through F-020 need re-evaluation against current code
 
 ### Previous Security Fixes (Reference for Reapplication)
 
