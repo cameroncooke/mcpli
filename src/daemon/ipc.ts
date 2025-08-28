@@ -46,6 +46,105 @@ export interface IPCServer {
 }
 
 /**
+ * F-014: IPC frame safety limits
+ * - Soft limit (default): 100MB — reject request/response but keep processes alive.
+ * - Hard limit: 500MB — daemon terminates to prevent runaway memory (server-side only).
+ * - Configurable via MCPLI_IPC_MAX_FRAME_BYTES for the soft limit; clamped below hard limit.
+ */
+const DEFAULT_MAX_FRAME_BYTES = 100 * 1024 * 1024; // 100MB
+const HARD_KILL_THRESHOLD_BYTES = 500 * 1024 * 1024; // 500MB (daemon kill threshold)
+let oversizeKillInitiated = false;
+
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let b = Math.max(0, bytes);
+  let i = 0;
+  while (b >= 1024 && i < units.length - 1) {
+    b /= 1024;
+    i++;
+  }
+  const v = i === 0 ? b.toString() : b.toFixed(2);
+  return `${v} ${units[i]}`;
+}
+
+function getIpcLimits(): { maxFrameBytes: number; killThresholdBytes: number } {
+  const envVal = process.env.MCPLI_IPC_MAX_FRAME_BYTES;
+  let maxFrame = DEFAULT_MAX_FRAME_BYTES;
+  if (typeof envVal === 'string' && envVal.trim() !== '') {
+    const parsed = Number(envVal);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      maxFrame = Math.floor(parsed);
+    } else {
+      console.warn(
+        `[F-014] Ignoring invalid MCPLI_IPC_MAX_FRAME_BYTES='${envVal}'. Using default ${formatBytes(
+          DEFAULT_MAX_FRAME_BYTES,
+        )}.`,
+      );
+    }
+  }
+  if (maxFrame >= HARD_KILL_THRESHOLD_BYTES) {
+    const clamped = HARD_KILL_THRESHOLD_BYTES - 1;
+    console.warn(
+      `[F-014] MCPLI_IPC_MAX_FRAME_BYTES (${formatBytes(
+        maxFrame,
+      )}) exceeds or equals hard kill threshold (${formatBytes(
+        HARD_KILL_THRESHOLD_BYTES,
+      )}). Clamping to ${formatBytes(clamped)}.`,
+    );
+    maxFrame = clamped;
+  }
+  return { maxFrameBytes: maxFrame, killThresholdBytes: HARD_KILL_THRESHOLD_BYTES };
+}
+
+function makeOversizeRequestError(current: number, limit: number): string {
+  return [
+    `IPC request too large: ${formatBytes(current)} exceeds limit ${formatBytes(limit)}.`,
+    `Set MCPLI_IPC_MAX_FRAME_BYTES to a higher value if this is expected data.`,
+    `Request rejected; daemon remains running.`,
+  ].join(' ');
+}
+
+function makeOversizeResponseError(current: number, limit: number): string {
+  return [
+    `IPC response too large: ${formatBytes(current)} exceeds limit ${formatBytes(limit)}.`,
+    `Set MCPLI_IPC_MAX_FRAME_BYTES to a higher value if this is expected data.`,
+  ].join(' ');
+}
+
+function terminateProcessWithServerClose(server: net.Server, reason: string): void {
+  if (oversizeKillInitiated) return;
+  oversizeKillInitiated = true;
+  console.error(
+    `[F-014] ${reason} — Terminating daemon to prevent runaway memory. Hard threshold: ${formatBytes(
+      HARD_KILL_THRESHOLD_BYTES,
+    )}.`,
+  );
+  try {
+    server.close(() => {
+      try {
+        process.exit(1);
+      } catch {
+        // ignore
+      }
+    });
+  } catch {
+    try {
+      process.exit(1);
+    } catch {
+      // ignore
+    }
+  }
+  // Failsafe in case server.close never calls back
+  setTimeout(() => {
+    try {
+      process.exit(1);
+    } catch {
+      // ignore
+    }
+  }, 1500);
+}
+
+/**
  * Ensure that the parent directory for a Unix domain socket is securely owned and permissioned.
  * - Creates the directory recursively with mode 0700 by default
  * - Verifies it's not a symlink and owned by the current user
@@ -164,11 +263,51 @@ export async function createIPCServerPath(
     // Socket file doesn't exist, which is fine
   }
 
+  const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
+
   const server = net.createServer((client) => {
     let buffer = '';
 
     client.on('data', async (data) => {
+      // Append new data and enforce frame size limits before parsing
       buffer += data.toString();
+      const currentBytes = Buffer.byteLength(buffer, 'utf8');
+
+      if (currentBytes > killThresholdBytes) {
+        // Hard kill: terminate daemon to prevent runaway memory usage
+        try {
+          client.destroy();
+        } catch {
+          // ignore
+        }
+        terminateProcessWithServerClose(
+          server,
+          `IPC request buffer exceeded hard kill threshold (${formatBytes(
+            currentBytes,
+          )} > ${formatBytes(killThresholdBytes)})`,
+        );
+        return;
+      }
+
+      if (currentBytes > maxFrameBytes) {
+        // Soft limit: reject request, clear buffer, keep daemon alive
+        const response: IPCResponse = {
+          id: 'unknown',
+          error: makeOversizeRequestError(currentBytes, maxFrameBytes),
+        };
+        try {
+          client.write(JSON.stringify(response) + '\n');
+        } catch {
+          // ignore write failure
+        }
+        buffer = '';
+        try {
+          client.end();
+        } catch {
+          // ignore
+        }
+        return;
+      }
 
       // Handle multiple JSON messages in buffer
       while (true) {
@@ -190,7 +329,11 @@ export async function createIPCServerPath(
             id: 'unknown',
             error: error instanceof Error ? error.message : String(error),
           };
-          client.write(JSON.stringify(response) + '\n');
+          try {
+            client.write(JSON.stringify(response) + '\n');
+          } catch {
+            // ignore
+          }
         }
       }
     });
@@ -286,11 +429,51 @@ export async function createIPCServerFromFD(
   fd: number,
   handler: (request: IPCRequest) => Promise<unknown>,
 ): Promise<IPCServer> {
+  const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
+
   const server = net.createServer((client) => {
     let buffer = '';
 
     client.on('data', async (data) => {
+      // Append new data and enforce frame size limits before parsing
       buffer += data.toString();
+      const currentBytes = Buffer.byteLength(buffer, 'utf8');
+
+      if (currentBytes > killThresholdBytes) {
+        // Hard kill: terminate daemon to prevent runaway memory usage
+        try {
+          client.destroy();
+        } catch {
+          // ignore
+        }
+        terminateProcessWithServerClose(
+          server,
+          `IPC request buffer exceeded hard kill threshold (${formatBytes(
+            currentBytes,
+          )} > ${formatBytes(killThresholdBytes)})`,
+        );
+        return;
+      }
+
+      if (currentBytes > maxFrameBytes) {
+        // Soft limit: reject request, clear buffer, keep daemon alive
+        const response: IPCResponse = {
+          id: 'unknown',
+          error: makeOversizeRequestError(currentBytes, maxFrameBytes),
+        };
+        try {
+          client.write(JSON.stringify(response) + '\n');
+        } catch {
+          // ignore write failure
+        }
+        buffer = '';
+        try {
+          client.end();
+        } catch {
+          // ignore
+        }
+        return;
+      }
 
       // Handle multiple JSON messages in buffer
       while (true) {
@@ -312,7 +495,11 @@ export async function createIPCServerFromFD(
             id: 'unknown',
             error: error instanceof Error ? error.message : String(error),
           };
-          client.write(JSON.stringify(response) + '\n');
+          try {
+            client.write(JSON.stringify(response) + '\n');
+          } catch {
+            // ignore
+          }
         }
       }
     });
@@ -381,6 +568,8 @@ export async function sendIPCRequest(
   request: IPCRequest,
   timeoutMs = 10000,
 ): Promise<unknown> {
+  const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
+
   return new Promise((resolve, reject) => {
     const client = net.connect(socketPath, () => {
       client.write(JSON.stringify(request) + '\n');
@@ -388,18 +577,58 @@ export async function sendIPCRequest(
 
     let buffer = '';
     const timeout = setTimeout(() => {
-      client.destroy();
+      try {
+        client.destroy();
+      } catch {
+        // ignore
+      }
       reject(new Error(`IPC request timeout after ${timeoutMs}ms`));
     }, timeoutMs);
 
     client.on('data', (data) => {
       buffer += data.toString();
 
+      const currentBytes = Buffer.byteLength(buffer, 'utf8');
+
+      if (currentBytes > killThresholdBytes) {
+        clearTimeout(timeout);
+        try {
+          client.destroy();
+        } catch {
+          // ignore
+        }
+        buffer = '';
+        reject(
+          new Error(
+            `[F-014] IPC response exceeded hard threshold ${formatBytes(
+              killThresholdBytes,
+            )}. Aborting to prevent runaway memory.`,
+          ),
+        );
+        return;
+      }
+
+      if (currentBytes > maxFrameBytes) {
+        clearTimeout(timeout);
+        try {
+          client.destroy();
+        } catch {
+          // ignore
+        }
+        buffer = '';
+        reject(new Error(makeOversizeResponseError(currentBytes, maxFrameBytes)));
+        return;
+      }
+
       const newlineIndex = buffer.indexOf('\n');
       if (newlineIndex !== -1) {
         const message = buffer.slice(0, newlineIndex);
         clearTimeout(timeout);
-        client.end();
+        try {
+          client.end();
+        } catch {
+          // ignore
+        }
 
         try {
           const response: IPCResponse = JSON.parse(message) as IPCResponse;
@@ -421,7 +650,11 @@ export async function sendIPCRequest(
 
     client.on('timeout', () => {
       clearTimeout(timeout);
-      client.destroy();
+      try {
+        client.destroy();
+      } catch {
+        // ignore
+      }
       reject(new Error('IPC connection timeout'));
     });
   });
