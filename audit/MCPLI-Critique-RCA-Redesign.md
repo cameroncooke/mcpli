@@ -60,6 +60,7 @@ MCPLI has undergone a significant architectural evolution, migrating from a manu
 | F-015 | Env | Correct daemon env isolation | 1 | High | `runtime.ts:159-171` deriveIdentityEnv |
 | F-016 | Testing | No automated testing infrastructure | 4 | High | `.github/workflows/ci.yml` no test step |
 | F-017 | Dependency | Critical socket-activation dependency | 2 | Medium | `runtime-launchd.ts:3` single point of failure |
+| F-018 | UX/DevEx | MCP server stderr completely broken | 4 | High | `wrapper.ts:166` stderr never shows even with --debug |
 
 ## 4. RCAs (deep-dive bundles)
 
@@ -109,7 +110,7 @@ class WindowsServiceOrchestrator implements Orchestrator { ... }
 
 **Effort**: Small (S) - **COMPLETED**
 
-### RCA-3: CLI UX Inconsistencies (F-004, F-005, F-006)
+### RCA-3: CLI UX Inconsistencies (F-004, F-005, F-006) ✅ COMPLETED
 
 **Symptom**: Multiple CLI behavior/documentation mismatches  
 **Root Cause**: Help text and parsing logic developed separately without validation  
@@ -145,6 +146,48 @@ class WindowsServiceOrchestrator implements Orchestrator { ... }
 - Integration tests for daemon lifecycle using test servers
 - Dependency audit and pinning strategy
 **Effort**: Medium (M) - essential before any architectural changes
+
+### RCA-6: MCP Server stderr Completely Broken (F-018)
+
+**Symptom**: MCP server stderr never shows, even with `--debug` or `--logs` flags
+**Impact**: Impossible to debug MCP server issues; critical for development workflow
+**Root Cause**: Stderr inheritance broken in launchd daemon environment
+**Evidence**:
+- `wrapper.ts:166` - `stderr: this.debug || this.logs ? 'inherit' : 'ignore'`
+- Weather server has `console.error('Weather MCP Server running...')` but never appears
+- Even fresh daemon start with `--debug` shows no server stderr
+- `.mcpli/daemon.log` remains empty despite `--logs` flag
+
+**Current Broken Behavior**:
+- `--verbose`: No effect (documented but non-functional)
+- `--debug`: Shows MCPLI debug but no MCP server stderr
+- `--logs`: Creates empty daemon.log file
+- No way to see server startup messages or error output
+
+**Expected Behavior**:
+- `--verbose`: Show MCP server stderr only (clean separation for debugging)
+- `--debug`: Show MCPLI infrastructure debug messages
+- `--logs`: Capture server stderr to daemon.log file
+- Normal mode: Clean output for JSON parsing/automation
+
+**Root Cause Analysis**:
+The issue likely stems from launchd process inheritance and stdio redirection. The `StdioClientTransport` may not be properly inheriting stderr in the launchd-spawned daemon environment.
+
+**Proposed Solution**:
+1. **Immediate**: Add `MCPLI_VERBOSE` support for future use
+2. **Investigate**: Debug why `inherit` stderr isn't working in launchd context
+3. **Alternative**: Consider explicit stderr capture and relay through IPC
+4. **Logging**: Fix `--logs` to actually capture stderr to daemon.log
+
+**Technical Implementation**:
+- Add `verbose?: boolean` to `EnsureOptions` interface
+- Add `MCPLI_VERBOSE: opts.verbose ? '1' : '0'` in runtime-launchd.ts
+- Add `this.verbose = process.env.MCPLI_VERBOSE === '1'` in wrapper.ts
+- Update stderr logic: `stderr: this.verbose || this.debug || this.logs ? 'inherit' : 'ignore'`
+- **Investigate**: Why `inherit` doesn't work in launchd daemon context
+
+**Effort**: Medium (M) - requires debugging launchd stdio inheritance
+**Risk**: Medium - may need architectural changes to stderr handling
 
 ## 5. Security & Privacy Review
 
@@ -482,6 +525,32 @@ GET /health -> {status: "healthy", uptime: 1234, connections: 5}
 - **Assumptions & gaps** section properly identifies key unknowns with verification plans
 
 **Audit conclusion**: Comprehensive, evidence-based analysis ready for delivery ✅
+
+## 14.1 Implementation Updates
+
+### RCA-3: CLI UX Inconsistencies - COMPLETED ✅
+**Fixed on 2025-08-29**
+
+Successfully resolved all three CLI UX inconsistencies:
+
+- **F-004 ✅**: Implemented `handleDaemonLogs` function in `src/daemon/commands.ts`
+  - Uses macOS `tail -n 200 -F` to stream `.mcpli/daemon.log`
+  - Shows clear error when log file missing with remediation instructions
+  - Properly wired into CLI router with `case 'logs'` in `src/mcpli.ts`
+
+- **F-005 ✅**: Fixed timeout help text inconsistency in `src/daemon/commands.ts`
+  - Changed `--timeout <ms>` to `--timeout=<seconds>` to match actual parser behavior
+  - Now consistent across global and daemon help text
+
+- **F-006 ✅**: Made `--quiet` flag properly scoped as daemon-only flag
+  - Removed `--quiet` from global flags (was redundant for tool execution)
+  - Made `--quiet` available only for daemon subcommands where it's useful
+  - Suppresses informational messages in daemon management operations
+  - Updated help text to show `--quiet` only in daemon help, not global help
+
+**Behavior**: `--quiet` is now a daemon-only flag that suppresses informational output from daemon management operations (start/stop/clean/restart) while preserving errors and primary tool output. Tool execution is clean by default.
+
+**Impact**: No breaking changes, all existing functionality preserved, CLI UX now consistent.
 
 ## 15. Appendices
 

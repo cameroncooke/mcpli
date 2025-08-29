@@ -6,6 +6,7 @@ import {
 } from './runtime.ts';
 import fs from 'fs/promises';
 import path from 'path';
+import { spawn } from 'child_process';
 
 export interface DaemonCommandOptions {
   cwd?: string;
@@ -14,6 +15,7 @@ export interface DaemonCommandOptions {
   debug?: boolean;
   logs?: boolean;
   timeout?: number;
+  quiet?: boolean;
 }
 
 export async function handleDaemonStart(
@@ -33,7 +35,9 @@ export async function handleDaemonStart(
     const identityEnv = deriveIdentityEnv(options.env ?? {});
     const id = computeDaemonId(command, args, identityEnv);
 
-    console.log(`Ensuring daemon (id ${id}) for: ${command} ${args.join(' ')}`);
+    if (!options.quiet) {
+      console.log(`Ensuring daemon (id ${id}) for: ${command} ${args.join(' ')}`);
+    }
 
     const ensureRes = await orchestrator.ensure(command, args, {
       cwd,
@@ -44,11 +48,13 @@ export async function handleDaemonStart(
       preferImmediateStart: true,
     });
 
-    console.log(`Launchd job ensured.`);
-    if (ensureRes.label) console.log(`  Label: ${ensureRes.label}`);
-    console.log(`  ID: ${ensureRes.id}`);
-    console.log(`  Socket: ${ensureRes.socketPath}`);
-    if (ensureRes.pid) console.log(`  PID: ${ensureRes.pid}`);
+    if (!options.quiet) {
+      console.log(`Launchd job ensured.`);
+      if (ensureRes.label) console.log(`  Label: ${ensureRes.label}`);
+      console.log(`  ID: ${ensureRes.id}`);
+      console.log(`  Socket: ${ensureRes.socketPath}`);
+      if (ensureRes.pid) console.log(`  PID: ${ensureRes.pid}`);
+    }
   } catch (error) {
     console.error(`Failed to ensure daemon: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
@@ -70,7 +76,9 @@ export async function handleDaemonStop(
     }
 
     await orchestrator.stop(id);
-    console.log(id ? `Stopped daemon ${id}` : 'Stopped all daemons for this project');
+    if (!options.quiet) {
+      console.log(id ? `Stopped daemon ${id}` : 'Stopped all daemons for this project');
+    }
   } catch (error) {
     console.error(`Failed to stop daemon: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
@@ -107,7 +115,9 @@ export async function handleDaemonRestart(
   args: string[] = [],
   options: DaemonCommandOptions = {},
 ): Promise<void> {
-  console.log('Restarting daemon...');
+  if (!options.quiet) {
+    console.log('Restarting daemon...');
+  }
 
   await handleDaemonStop(command, args, options);
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -115,7 +125,9 @@ export async function handleDaemonRestart(
   if (command?.trim()) {
     await handleDaemonStart(command, args, options);
   } else {
-    console.log('No specific command provided. Daemons will start on next usage.');
+    if (!options.quiet) {
+      console.log('No specific command provided. Daemons will start on next usage.');
+    }
   }
 }
 
@@ -130,18 +142,51 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
     const mcpliDir = path.join(cwd, '.mcpli');
     try {
       await fs.rmdir(mcpliDir);
-      console.log('Removed empty .mcpli directory');
+      if (!options.quiet) {
+        console.log('Removed empty .mcpli directory');
+      }
     } catch {
       // ignore
     }
 
-    console.log('Daemon cleanup complete');
+    if (!options.quiet) {
+      console.log('Daemon cleanup complete');
+    }
   } catch (error) {
     console.error(
       `Failed to clean daemon files: ${error instanceof Error ? error.message : error}`,
     );
     process.exit(1);
   }
+}
+
+/**
+ * Stream daemon logs using the system 'tail' command on macOS.
+ * Looks for .mcpli/daemon.log in the current working directory.
+ */
+export async function handleDaemonLogs(options: DaemonCommandOptions = {}): Promise<void> {
+  const cwd = options.cwd ?? process.cwd();
+  const logPath = path.join(cwd, '.mcpli', 'daemon.log');
+
+  try {
+    await fs.stat(logPath);
+  } catch {
+    console.error(
+      'No daemon log file found. Start logging with: mcpli daemon start --logs -- <command> [args...]',
+    );
+    process.exit(1);
+  }
+
+  const tailArgs = ['-n', '200', '-F', logPath];
+  const cp = spawn('tail', tailArgs, { stdio: 'inherit' });
+
+  await new Promise<void>((resolve, reject) => {
+    cp.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tail exited with code ${code}`));
+    });
+    cp.on('error', reject);
+  });
 }
 
 export function printDaemonHelp(): void {
@@ -162,7 +207,8 @@ export function printDaemonHelp(): void {
   console.log('  --force                          Force stop daemon');
   console.log('  --logs                           Enable daemon logging');
   console.log('  --debug                          Enable debug output');
-  console.log('  --timeout <ms>                   Set daemon inactivity timeout');
+  console.log('  --quiet, -q                      Suppress informational output');
+  console.log('  --timeout=<seconds>              Set daemon inactivity timeout (seconds)');
   console.log('');
   console.log('Notes:');
   console.log('  - Daemons are command-specific per directory using stable daemon IDs');

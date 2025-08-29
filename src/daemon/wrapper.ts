@@ -26,6 +26,7 @@ class MCPLIDaemon {
   private cwd: string;
   private debug: boolean;
   private logs: boolean;
+  private quiet: boolean;
   private timeoutMs: number;
 
   private daemonId?: string;
@@ -47,6 +48,7 @@ class MCPLIDaemon {
     this.cwd = process.env.MCPLI_CWD ?? process.cwd();
     this.debug = process.env.MCPLI_DEBUG === '1';
     this.logs = process.env.MCPLI_LOGS === '1';
+    this.quiet = process.env.MCPLI_QUIET === '1';
     this.timeoutMs = parseInt(process.env.MCPLI_TIMEOUT ?? '1800000', 10);
     this.mcpCommand = process.env.MCPLI_COMMAND ?? '';
     this.mcpArgs = JSON.parse(process.env.MCPLI_ARGS ?? '[]') as string[];

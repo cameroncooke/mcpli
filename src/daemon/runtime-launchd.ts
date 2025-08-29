@@ -417,6 +417,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       MCPLI_CWD: cwd,
       MCPLI_DEBUG: opts.debug ? '1' : '0',
       MCPLI_LOGS: opts.logs ? '1' : '0',
+      MCPLI_QUIET: opts.quiet ? '1' : '0',
       MCPLI_TIMEOUT: String(
         typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs)
           ? opts.timeoutMs
