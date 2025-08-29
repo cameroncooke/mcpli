@@ -11,8 +11,8 @@ import {
   Orchestrator,
   RuntimeStatus,
   deriveIdentityEnv,
+  isValidDaemonId,
 } from './runtime.ts';
-import { isValidDaemonId } from './lock.ts';
 
 /**
  * Validate daemon id and throw if invalid, including context for diagnostics.

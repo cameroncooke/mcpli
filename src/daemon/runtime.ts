@@ -187,6 +187,12 @@ export function computeDaemonId(
   return digest.slice(0, 8);
 }
 
+const DAEMON_ID_REGEX = /^[a-z0-9_-]{1,64}$/i;
+
+export function isValidDaemonId(id: string): boolean {
+  return typeof id === 'string' && DAEMON_ID_REGEX.test(id);
+}
+
 /**
  * Resolve the orchestrator implementation.
  * - On macOS (darwin), selects the launchd-based orchestrator.
