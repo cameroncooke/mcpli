@@ -19,6 +19,7 @@ export interface EnsureOptions {
   env?: Record<string, string>;
   debug?: boolean;
   logs?: boolean;
+  quiet?: boolean;
   timeout?: number; // seconds
   timeoutMs?: number; // milliseconds (derived from timeout if not provided)
   /**

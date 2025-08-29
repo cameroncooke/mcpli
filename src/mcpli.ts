@@ -14,6 +14,7 @@ import {
   handleDaemonStatus,
   handleDaemonRestart,
   handleDaemonClean,
+  handleDaemonLogs,
   printDaemonHelp,
 } from './daemon/index.ts';
 import { getConfig } from './config.ts';
@@ -110,6 +111,7 @@ function parseArgs(argv: string[]): {
     // Parse daemon-specific options
     for (const arg of daemonArgs) {
       if (arg === '--help' || arg === '-h') globals.help = true;
+      else if (arg === '--quiet' || arg === '-q') globals.quiet = true;
       else if (arg === '--debug') globals.debug = true;
       else if (arg === '--logs') globals.logs = true;
       else if (arg === '--verbose') globals.verbose = true;
@@ -194,8 +196,7 @@ function parseArgs(argv: string[]): {
 
     if (arg === '--help' || arg === '-h') {
       if (!foundToolName) globals.help = true;
-    } else if (arg === '--quiet' || arg === '-q') globals.quiet = true;
-    else if (arg === '--raw') globals.raw = true;
+    } else if (arg === '--raw') globals.raw = true;
     else if (arg === '--debug') globals.debug = true;
     else if (arg === '--logs') globals.logs = true;
     else if (arg === '--verbose') globals.verbose = true;
@@ -551,6 +552,7 @@ function printHelp(
   console.log('  --verbose      Show MCP server output (stderr/logs)');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
+
   const config = getConfig();
   console.log(
     `  --timeout=<seconds> Set daemon inactivity timeout (default: ${config.defaultTimeoutSeconds})`,
@@ -623,6 +625,7 @@ async function main(): Promise<void> {
         logs: globals.logs ?? globals.verbose,
         force: globals.force,
         timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
+        quiet: globals.quiet,
       };
 
       switch (daemonCommand) {
@@ -689,6 +692,11 @@ async function main(): Promise<void> {
           } else {
             await handleDaemonRestart(undefined, [], options);
           }
+          break;
+        }
+
+        case 'logs': {
+          await handleDaemonLogs(options);
           break;
         }
 
