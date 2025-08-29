@@ -87,18 +87,27 @@ class WindowsServiceOrchestrator implements Orchestrator { ... }
 **Trade-offs**: Complexity increase vs portability gain  
 **Effort**: Large (L) - requires new orchestrator implementations
 
-### RCA-2: Incomplete Architectural Migration (F-002, F-003)
+### RCA-2: Incomplete Architectural Migration (F-002, F-003) ✅ RESOLVED
 
 **Symptom**: Legacy `lock.ts` code and outdated `docs/architecture.md` coexist with new system  
 **Impact**: Developer confusion, maintenance burden, misleading documentation  
 **Root Cause**: Migration focused on implementation, cleanup phase incomplete  
 **Evidence**: `lock.ts` still exported in `index.ts:2` but only `isValidDaemonId` used in `runtime-launchd.ts:15`
 
-**Quick Fix**: 
-- Move `isValidDaemonId` to `runtime.ts` 
-- Remove `lock.ts` and update exports
-- Update `docs/architecture.md` to match current system
-**Effort**: Small (S)
+**Resolution Implemented** (2025-08-29):
+- ✅ Moved `isValidDaemonId` function and `DAEMON_ID_REGEX` to `runtime.ts:189-193`
+- ✅ Updated `runtime-launchd.ts` import to use `runtime.ts` instead of `lock.ts`
+- ✅ Deleted `lock.ts` file entirely (no backward compatibility needed for unreleased product)
+- ✅ Removed `export * from './lock.ts';` from `index.ts`
+- ✅ Replaced `docs/architecture.md` content to reflect current launchd-based system
+- ✅ All validation tests pass: lint, typecheck, build, and CLI functionality verified
+
+**Technical Details**:
+- Identity validation now centralized in `runtime.ts` alongside other identity functions
+- Documentation accurately describes launchd orchestration without legacy lockfile references
+- Clean removal approach eliminated all technical debt without compatibility layers
+
+**Effort**: Small (S) - **COMPLETED**
 
 ### RCA-3: CLI UX Inconsistencies (F-004, F-005, F-006)
 
