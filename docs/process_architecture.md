@@ -190,7 +190,7 @@ Core daemon functionality:
 
 ### IPC Communication System (`src/daemon/ipc.ts`)
 
-The IPC system provides reliable communication between clients and daemons using Unix domain sockets.
+The IPC system provides reliable communication between clients and daemons using Unix domain sockets with comprehensive security protections against connection floods and socket-based attacks.
 
 ```mermaid
 sequenceDiagram
@@ -200,7 +200,8 @@ sequenceDiagram
     participant MCP as MCP Server
 
     Client->>Socket: Connect to daemon socket
-    Socket->>Daemon: Accept connection
+    Socket->>Daemon: Accept connection (if under 64 limit)
+    Note over Daemon: Check connection limit & start handshake timer
 
     Client->>Socket: Send JSON-RPC request
     Socket->>Daemon: Receive request
@@ -900,9 +901,12 @@ graph LR
 ```
 
 Concurrency characteristics:
-- **Multiple clients can connect concurrently** to the same daemon via the Unix socket
-- **Requests are handled per connection**. The MCP SDK handles JSON-RPC concurrency; MCPLI does not apply explicit request serialization in the wrapper
-- **Load Distribution**: Multiple daemon types can run simultaneously for different server configurations
+- **Connection limits**: Maximum 64 concurrent client connections per daemon (F-009 protection)
+- **Flood protection**: Excess connections are immediately rejected to prevent resource exhaustion
+- **Handshake timeouts**: 15-second timeout for initial client handshake to prevent slowloris attacks
+- **Multiple clients**: Up to limit can connect concurrently to the same daemon via Unix socket
+- **Request processing**: MCP SDK handles JSON-RPC concurrency within connection limits
+- **Load distribution**: Multiple daemon types can run simultaneously for different server configurations
 
 ## Security Model
 
@@ -960,11 +964,21 @@ graph TB
    - Local Unix sockets only (no network exposure)
    - Process-to-process communication without external access
    - Request/response validation and sanitization
+   - Connection flood protection (64 concurrent connection limit)
+   - Handshake idle timeout (15s) prevents slowloris attacks
+   - Safe socket file operations prevent TOCTOU race conditions
 
 4. **Environment Security**:
    - Environment variable filtering prevents sensitive data leakage
    - Controlled environment inheritance for MCP servers
    - No automatic environment variable propagation
+   - Security limits are hardcoded and not user-configurable
+
+5. **IPC Security Hardening**:
+   - Connection limits enforced at both Node.js and application levels
+   - Safe socket cleanup operations that verify file types before deletion
+   - Defense-in-depth socket validation after binding
+   - Immediate rejection of excess connections without resource consumption
 
 ---
 
@@ -976,7 +990,7 @@ Key architectural achievements:
 - **Performance**: Sub-100ms tool execution for warm processes (measured 60-63ms for simple tools)
 - **Reliability**: Comprehensive error handling with shutdown protection and automatic recovery
 - **Scalability**: Efficient resource usage with concurrent client support and daemon isolation  
-- **Security**: Process isolation and restricted file system permissions
+- **Security**: Process isolation, restricted file system permissions, and IPC flood protection
 - **Maintainability**: Clean separation of concerns with launchd-based orchestration
 
 The integration with macOS launchd provides enterprise-grade process management, while the socket activation system ensures efficient resource utilization and fast startup times. The `preferImmediateStart=false` optimization eliminates daemon restart delays, achieving the target sub-100ms performance for warm requests. The result is a production-ready CLI tool system that transforms simple MCP servers into high-performance, persistent command-line tools.
