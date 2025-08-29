@@ -91,9 +91,27 @@ function getIpcLimits(): { maxFrameBytes: number; killThresholdBytes: number } {
         HARD_KILL_THRESHOLD_BYTES,
       )}). Clamping to ${formatBytes(clamped)}.`,
     );
-    maxFrame = clamped;
   }
-  return { maxFrameBytes: maxFrame, killThresholdBytes: HARD_KILL_THRESHOLD_BYTES };
+  return {
+    maxFrameBytes: Math.min(maxFrame, HARD_KILL_THRESHOLD_BYTES - 1),
+    killThresholdBytes: HARD_KILL_THRESHOLD_BYTES,
+  };
+}
+
+/**
+ * Fixed server tunables for security (F-009)
+ * These limits protect against connection flood attacks and cannot be overridden by users.
+ */
+function getIpcServerTunables(): {
+  maxConnections: number;
+  connectionIdleTimeoutMs: number;
+  listenBacklog: number;
+} {
+  return {
+    maxConnections: 64, // Fixed secure limit for concurrent connections
+    connectionIdleTimeoutMs: 15000, // Fixed timeout for handshake completion (15s)
+    listenBacklog: 128, // Fixed OS-level connection queue size
+  };
 }
 
 function makeOversizeRequestError(current: number, limit: number): string {
@@ -238,37 +256,129 @@ async function ensureSecureUnixSocketDir(
   }
 }
 
-export async function createIPCServer(
-  socketPath: string,
-  handler: (request: IPCRequest) => Promise<unknown>,
-): Promise<IPCServer> {
-  // Remove existing socket file if it exists
-  return createIPCServerPath(socketPath, handler, { unlinkOnClose: true, chmod: 0o600 });
+/**
+ * Safe unlink that only removes Unix domain sockets or symlinks (F-010).
+ * No-op on Windows or named pipe paths.
+ */
+async function safeUnlinkSocketIfExists(socketPath: string): Promise<void> {
+  const isWindows = process.platform === 'win32' || socketPath.startsWith('\\\\.\\');
+  if (isWindows) return;
+
+  const fs = await import('fs/promises');
+  try {
+    const st = await fs.lstat(socketPath);
+    const isSocket =
+      typeof (st as { isSocket?: () => boolean }).isSocket === 'function' &&
+      (st as { isSocket: () => boolean }).isSocket();
+    const isSymlink = typeof st.isSymbolicLink === 'function' && st.isSymbolicLink();
+
+    if (isSocket || isSymlink) {
+      await fs.unlink(socketPath);
+      console.log(`[DEBUG] Removed stale IPC socket path: ${socketPath}`);
+    } else {
+      throw new Error(`Refusing to remove non-socket file at: ${socketPath}`);
+    }
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code;
+    if (code === 'ENOENT') {
+      return; // Not present; nothing to do
+    }
+    if (err instanceof Error) {
+      // Propagate to caller; startup should fail rather than remove arbitrary files
+      throw err;
+    }
+    throw new Error(String(err));
+  }
 }
 
-export async function createIPCServerPath(
-  socketPath: string,
-  handler: (request: IPCRequest) => Promise<unknown>,
-  opts: {
-    unlinkOnClose?: boolean;
-    chmod?: number;
-    secureDirMode?: number;
-    umaskDuringListen?: number;
-  } = {},
-): Promise<IPCServer> {
-  // Pre-bind cleanup: remove existing socket file if present
+/**
+ * Post-bind verification for defense-in-depth (F-010).
+ * Verifies that the bound path is a socket and owned by current user. Logs warnings only.
+ * POSIX only; no-op on Windows/named pipe paths.
+ */
+async function verifySocketPostBind(socketPath: string): Promise<void> {
+  const isWindows = process.platform === 'win32' || socketPath.startsWith('\\\\.\\');
+  if (isWindows) return;
+
+  const fs = await import('fs/promises');
   try {
-    await import('fs/promises').then((fs) => fs.unlink(socketPath));
-  } catch {
-    // Socket file doesn't exist, which is fine
+    const st = await fs.lstat(socketPath);
+    const isSocket =
+      typeof (st as { isSocket?: () => boolean }).isSocket === 'function' &&
+      (st as { isSocket: () => boolean }).isSocket();
+    if (!isSocket) {
+      console.warn(`[F-010] Post-bind check: ${socketPath} is not a socket`);
+    }
+    try {
+      const getUid = (process as { getuid?: () => number }).getuid;
+      if (typeof getUid === 'function') {
+        const uid = getUid();
+        const statUid = (st as { uid?: number }).uid;
+        if (typeof statUid === 'number' && statUid !== uid) {
+          console.warn(
+            `[F-010] Post-bind ownership mismatch: ${socketPath} owned by uid ${statUid}, expected ${uid}`,
+          );
+        }
+      }
+    } catch {
+      // ignore unavailable ownership checks
+    }
+  } catch (err) {
+    console.warn(
+      `[F-010] Post-bind verification failed for ${socketPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
+}
 
+/**
+ * Attach server handlers that implement connection flood protection (F-009),
+ * handshake idle timeout, and frame-size safety limits (F-014).
+ */
+function attachIpcServerHandlers(
+  server: net.Server,
+  handler: (request: IPCRequest) => Promise<unknown>,
+  tunables: ReturnType<typeof getIpcServerTunables> = getIpcServerTunables(),
+): void {
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
+  let activeConnections = 0;
 
-  const server = net.createServer((client) => {
+  server.on('connection', (client) => {
+    activeConnections++;
+    if (activeConnections > tunables.maxConnections) {
+      activeConnections--; // Decrement since we're rejecting
+      // Immediately destroy the connection without any response
+      try {
+        client.destroy();
+      } catch {
+        // ignore
+      }
+      return;
+    }
     let buffer = '';
+    let handshakeCompleted = false;
+    let idleTimer: NodeJS.Timeout | undefined;
+
+    const armIdleTimer = (): void => {
+      if (handshakeCompleted) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        try {
+          client.end();
+        } catch {
+          // ignore
+        }
+      }, tunables.connectionIdleTimeoutMs);
+    };
+
+    // Start handshake timer immediately on connection
+    armIdleTimer();
 
     client.on('data', async (data) => {
+      // Reset handshake timer on any inbound data until first full message
+      armIdleTimer();
+
       // Append new data and enforce frame size limits before parsing
       buffer += data.toString();
       const currentBytes = Buffer.byteLength(buffer, 'utf8');
@@ -319,6 +429,15 @@ export async function createIPCServerPath(
 
         if (!message.trim()) continue;
 
+        // Mark handshake as completed upon first full message
+        if (!handshakeCompleted) {
+          handshakeCompleted = true;
+          if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = undefined;
+          }
+        }
+
         try {
           const request: IPCRequest = JSON.parse(message) as IPCRequest;
           const result = await handler(request);
@@ -338,14 +457,54 @@ export async function createIPCServerPath(
       }
     });
 
-    client.on('error', (error) => {
+    client.on('error', (error: NodeJS.ErrnoException) => {
+      // Reduce log spam for expected disconnects
+      if (error && (error.code === 'ECONNRESET' || error.code === 'EPIPE')) {
+        return;
+      }
       console.error('IPC client error:', error);
     });
-  });
 
-  // Ensure secure parent directory (POSIX only)
+    client.on('close', () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+      activeConnections = Math.max(0, activeConnections - 1);
+    });
+  });
+}
+
+export async function createIPCServer(
+  socketPath: string,
+  handler: (request: IPCRequest) => Promise<unknown>,
+): Promise<IPCServer> {
+  // Default behavior with unlinkOnClose and chmod
+  return createIPCServerPath(socketPath, handler, { unlinkOnClose: true, chmod: 0o600 });
+}
+
+export async function createIPCServerPath(
+  socketPath: string,
+  handler: (request: IPCRequest) => Promise<unknown>,
+  opts: {
+    unlinkOnClose?: boolean;
+    chmod?: number;
+    secureDirMode?: number;
+    umaskDuringListen?: number;
+  } = {},
+): Promise<IPCServer> {
+  // Ensure secure parent directory (POSIX only) BEFORE any unlink (F-010)
   const dirMode = typeof opts.secureDirMode === 'number' ? opts.secureDirMode : 0o700;
   await ensureSecureUnixSocketDir(socketPath, { mode: dirMode, failOnInsecure: true });
+
+  // Safe pre-bind cleanup: remove only stale sockets/symlinks (F-010)
+  await safeUnlinkSocketIfExists(socketPath);
+
+  const tunables = getIpcServerTunables();
+
+  const server = net.createServer();
+  server.maxConnections = tunables.maxConnections; // Set limit before listening
+  attachIpcServerHandlers(server, handler, tunables);
 
   // Prepare umask handling parameters
   const umaskDuringListen =
@@ -375,7 +534,7 @@ export async function createIPCServerPath(
     try {
       setTempUmask();
 
-      server.listen(socketPath, async () => {
+      server.listen(socketPath, tunables.listenBacklog, async () => {
         // Restore umask immediately upon successful bind
         restoreUmask();
 
@@ -393,6 +552,9 @@ export async function createIPCServerPath(
           }
         }
 
+        // Post-bind verification for defense-in-depth (F-010)
+        await verifySocketPostBind(socketPath);
+
         resolve({
           server,
           close: () =>
@@ -400,9 +562,9 @@ export async function createIPCServerPath(
               server.close(() => {
                 // Conditionally clean up socket file
                 const shouldUnlink = opts.unlinkOnClose !== false;
-                if (shouldUnlink && !isWindows) {
-                  import('fs/promises')
-                    .then((fs) => fs.unlink(socketPath).catch(() => {}))
+                if (shouldUnlink) {
+                  safeUnlinkSocketIfExists(socketPath)
+                    .catch(() => {})
                     .finally(resolveClose);
                 } else {
                   resolveClose();
@@ -429,85 +591,10 @@ export async function createIPCServerFromFD(
   fd: number,
   handler: (request: IPCRequest) => Promise<unknown>,
 ): Promise<IPCServer> {
-  const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
-
-  const server = net.createServer((client) => {
-    let buffer = '';
-
-    client.on('data', async (data) => {
-      // Append new data and enforce frame size limits before parsing
-      buffer += data.toString();
-      const currentBytes = Buffer.byteLength(buffer, 'utf8');
-
-      if (currentBytes > killThresholdBytes) {
-        // Hard kill: terminate daemon to prevent runaway memory usage
-        try {
-          client.destroy();
-        } catch {
-          // ignore
-        }
-        terminateProcessWithServerClose(
-          server,
-          `IPC request buffer exceeded hard kill threshold (${formatBytes(
-            currentBytes,
-          )} > ${formatBytes(killThresholdBytes)})`,
-        );
-        return;
-      }
-
-      if (currentBytes > maxFrameBytes) {
-        // Soft limit: reject request, clear buffer, keep daemon alive
-        const response: IPCResponse = {
-          id: 'unknown',
-          error: makeOversizeRequestError(currentBytes, maxFrameBytes),
-        };
-        try {
-          client.write(JSON.stringify(response) + '\n');
-        } catch {
-          // ignore write failure
-        }
-        buffer = '';
-        try {
-          client.end();
-        } catch {
-          // ignore
-        }
-        return;
-      }
-
-      // Handle multiple JSON messages in buffer
-      while (true) {
-        const newlineIndex = buffer.indexOf('\n');
-        if (newlineIndex === -1) break;
-
-        const message = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-
-        if (!message.trim()) continue;
-
-        try {
-          const request: IPCRequest = JSON.parse(message) as IPCRequest;
-          const result = await handler(request);
-          const response: IPCResponse = { id: request.id, result };
-          client.write(JSON.stringify(response) + '\n');
-        } catch (error) {
-          const response: IPCResponse = {
-            id: 'unknown',
-            error: error instanceof Error ? error.message : String(error),
-          };
-          try {
-            client.write(JSON.stringify(response) + '\n');
-          } catch {
-            // ignore
-          }
-        }
-      }
-    });
-
-    client.on('error', (error) => {
-      console.error('IPC client error:', error);
-    });
-  });
+  const tunables = getIpcServerTunables();
+  const server = net.createServer();
+  server.maxConnections = tunables.maxConnections; // Set limit before listening
+  attachIpcServerHandlers(server, handler, tunables);
 
   return new Promise((resolve, reject) => {
     server.listen({ fd, exclusive: false }, () => {

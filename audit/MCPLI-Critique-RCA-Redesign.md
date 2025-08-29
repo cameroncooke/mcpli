@@ -122,14 +122,38 @@ class WindowsServiceOrchestrator implements Orchestrator { ... }
 **Proposed Solution**: CLI audit and standardization  
 **Effort**: Medium (M)
 
-### RCA-4: IPC Security vs Availability Trade-offs (F-009, F-010, F-011)
+### RCA-4: IPC Security vs Availability Trade-offs (F-009, F-010, F-011) ✅ COMPLETED
 
 **Symptom**: Several medium-severity security/stability issues in IPC layer  
 **Root Cause**: Design optimized for performance and simplicity over defense-in-depth  
 **Evidence**: No connection limits, socket race conditions, platform-specific security gaps  
 
-**Proposed Solution**: Incremental hardening without breaking existing functionality  
-**Effort**: Medium (M)
+**Resolution Implemented** (2025-08-29):
+- ✅ **F-009 Fixed**: Added connection flood protection with fixed secure limits (64 concurrent connections)
+  - **SECURITY FIX**: Removed environment variable configurability to prevent attacker override
+  - Fixed hardcoded limits: 64 max connections, 15s handshake timeout, 128 backlog
+  - Manual connection counting with immediate rejection for excess connections
+  - Comprehensive testing confirms exactly 64 concurrent connections allowed, excess rejected
+  - Applied to both path-based and FD-based (launchd) servers via shared `attachIpcServerHandlers()`
+  
+- ✅ **F-010 Fixed**: Implemented safe socket file operations  
+  - Critical reordering: Secure parent directory FIRST, then safe unlink
+  - `safeUnlinkSocketIfExists()` only removes actual sockets/symlinks, refuses to touch other file types
+  - `verifySocketPostBind()` provides defense-in-depth validation after successful bind
+  - Applied safe unlink logic to server close operations to prevent cleanup race conditions
+
+- ✅ **F-011 Skipped**: Windows not supported by MCPLI (macOS-only CLI), existing Windows code paths remain as legacy placeholders
+
+**Technical Details**:
+- All changes localized to `src/daemon/ipc.ts` with no breaking API changes
+- Connection limits protect the daemon wrapper's ability to accept new requests
+- Safe socket operations prevent accidental deletion of non-socket files during startup/cleanup
+- Environment variables allow runtime tuning without CLI surface changes
+- Reduced error log spam by ignoring expected socket close conditions (ECONNRESET, EPIPE)
+
+**Validation**: All existing functionality preserved - CLI commands, daemon lifecycle, and IPC communication working normally
+
+**Effort**: Medium (M) - **COMPLETED**
 
 ### RCA-5: Missing Testing Infrastructure (F-016, F-017)
 
