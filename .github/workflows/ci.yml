@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     strategy:
       matrix:
@@ -35,8 +35,7 @@ jobs:
     - name: Type check
       run: npm run typecheck
 
-    # Note: Add test step once tests are implemented
-    # - name: Run tests
-    #   run: npm test
+    - name: Run tests (macOS launchd + unit/integration/e2e)
+      run: npm test
 
     - run: npx pkg-pr-new publish

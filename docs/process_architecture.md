@@ -12,8 +12,9 @@
 8. [Command Processing Flow](#command-processing-flow)
 9. [Environment and Identity Management](#environment-and-identity-management)
 10. [Error Handling and Recovery](#error-handling-and-recovery)
-11. [Performance Characteristics](#performance-characteristics)
-12. [Security Model](#security-model)
+11. [Testing Infrastructure](#testing-infrastructure)
+12. [Performance Characteristics](#performance-characteristics)
+13. [Security Model](#security-model)
 
 ## System Overview
 
@@ -907,6 +908,122 @@ Concurrency characteristics:
 - **Multiple clients**: Up to limit can connect concurrently to the same daemon via Unix socket
 - **Request processing**: MCP SDK handles JSON-RPC concurrency within connection limits
 - **Load distribution**: Multiple daemon types can run simultaneously for different server configurations
+
+## Testing Infrastructure
+
+### Automated Testing Architecture
+
+MCPLI implements comprehensive automated testing that validates the entire daemon lifecycle and IPC communication system. The testing infrastructure addresses audit findings F-016 (no automated testing) and F-017 (dependency risk) by providing reliable validation of production code paths.
+
+```mermaid
+graph TB
+    TestSuite[Test Suite] --> UnitTests[Unit Tests]
+    TestSuite --> IntegrationTests[Integration Tests]
+    TestSuite --> E2ETests[End-to-End Tests]
+    
+    UnitTests --> RuntimeTests[Runtime Identity Tests]
+    UnitTests --> SafetyTests[Safety Utility Tests]
+    UnitTests --> IPCLimitsTests[IPC Limits Tests]
+    
+    IntegrationTests --> DaemonLifecycle[Daemon Lifecycle Tests]
+    IntegrationTests --> IPCComm[IPC Communication Tests]
+    IntegrationTests --> TestHelper[Test Helper Validation]
+    
+    E2ETests --> CLIUsage[CLI Usage Tests]
+    E2ETests --> ToolExecution[Tool Execution Tests]
+    
+    subgraph "Test Environment"
+        TempDir[Isolated Temp Directories]
+        TestServers[Test MCP Servers]
+        SocketPolling[Socket Readiness Polling]
+    end
+    
+    IntegrationTests --> TempDir
+    IntegrationTests --> TestServers
+    IntegrationTests --> SocketPolling
+```
+
+### Test Coverage and Validation
+
+**Unit Tests (13 tests)**:
+- Runtime identity computation and environment normalization
+- Prototype pollution prevention (safety utilities)
+- IPC frame limits and configuration validation
+- Core business logic without external dependencies
+
+**Integration Tests (5 tests)**:
+- Real daemon startup through launchd
+- Socket activation and IPC communication
+- Daemon lifecycle management (start, stop, clean)
+- Test environment isolation and cleanup
+
+**End-to-End Tests (3 tests)**:
+- Complete CLI usage patterns
+- Tool discovery and execution
+- Real server communication workflows
+
+### Testing Design Principles
+
+The testing infrastructure follows industry-standard patterns identified through research of major daemon-based projects (Docker, systemd, Redis):
+
+**Socket Readiness Synchronization**:
+```typescript
+// Extract actual socket path from daemon output
+const socketMatch = startResult.stdout.match(/Socket: (.+)/);
+if (!socketMatch) {
+  throw new Error('Could not extract socket path from daemon start output');
+}
+
+// Poll for socket file existence (industry standard)
+await env.pollForSocketPath(socketMatch[1]);
+
+// Test actual functionality, not timing
+const result = await env.cli('echo', '--message', 'test', '--', command, ...args);
+```
+
+**Test Environment Isolation**:
+- Each test suite runs in isolated temporary directories
+- Test servers are copied to avoid path conflicts
+- Proper cleanup prevents test interference
+- Socket paths computed to match actual daemon runtime logic
+
+**Production Code Validation**:
+- Tests exercise real launchd socket activation
+- IPC communication tested through actual Unix sockets
+- No mocked components - validates production paths
+- macOS-specific testing matches deployment environment
+
+### Test Infrastructure Components
+
+**Test Helper (`tests/test-helper.ts`)**:
+- Provides isolated test environments with temporary directories
+- Implements socket readiness polling to eliminate race conditions
+- Matches daemon ID computation logic from `src/daemon/runtime.ts`
+- Proper cleanup and resource management
+
+**Test Servers**:
+- `test-server.js`: Simple, reliable server with echo/fail/delay tools
+- `complex-test-server.js`: JSON Schema validation testing
+- `weather-server.js`: Full-featured server with API calls
+
+**CI Integration**:
+- Runs on macOS-latest to match launchd requirements
+- Validates all test types: unit, integration, e2e
+- Part of build pipeline ensuring production reliability
+
+### Validation of Audit Findings
+
+**F-016 (No Automated Testing) - RESOLVED**:
+- Comprehensive test suite covering all major components
+- 21 tests validating daemon lifecycle, IPC, and CLI functionality
+- Automated execution in CI pipeline
+
+**F-017 (Dependency Risk on socket-activation) - VALIDATED**:
+- IPC limits tests validate frame size controls
+- Integration tests confirm socket activation functionality
+- Error handling tests validate fallback behavior
+
+The testing infrastructure ensures that changes to the daemon system, IPC communication, or launchd integration are automatically validated, preventing regressions and providing confidence in system reliability.
 
 ## Security Model
 
