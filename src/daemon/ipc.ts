@@ -99,19 +99,43 @@ function getIpcLimits(): { maxFrameBytes: number; killThresholdBytes: number } {
 }
 
 /**
- * Fixed server tunables for security (F-009)
- * These limits protect against connection flood attacks and cannot be overridden by users.
+ * Environment-driven server tunables (F-009)
+ * - MCPLI_IPC_MAX_CONNECTIONS (default 64, clamp [1..1000])
+ * - MCPLI_IPC_CONNECTION_IDLE_TIMEOUT_MS (default 15000, clamp [1000..600000])
+ * - MCPLI_IPC_LISTEN_BACKLOG (default 128, clamp [1..2048])
  */
 function getIpcServerTunables(): {
   maxConnections: number;
   connectionIdleTimeoutMs: number;
   listenBacklog: number;
 } {
-  return {
-    maxConnections: 64, // Fixed secure limit for concurrent connections
-    connectionIdleTimeoutMs: 15000, // Fixed timeout for handshake completion (15s)
-    listenBacklog: 128, // Fixed OS-level connection queue size
+  const clamp = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
+
+  const parseEnvInt = (name: string, defValue: number, min: number, max: number): number => {
+    const raw = process.env[name];
+    if (typeof raw !== 'string' || raw.trim() === '') return defValue;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      console.warn(`[IPC] Ignoring invalid ${name}='${raw}'. Using default ${defValue}.`);
+      return defValue;
+    }
+    const v = Math.floor(n);
+    if (v < min || v > max) {
+      console.warn(`[IPC] Clamping ${name}=${v} to range [${min}..${max}].`);
+    }
+    return clamp(v, min, max);
   };
+
+  const maxConnections = parseEnvInt('MCPLI_IPC_MAX_CONNECTIONS', 64, 1, 1000);
+  const connectionIdleTimeoutMs = parseEnvInt(
+    'MCPLI_IPC_CONNECTION_IDLE_TIMEOUT_MS',
+    15000,
+    1000,
+    600000,
+  );
+  const listenBacklog = parseEnvInt('MCPLI_IPC_LISTEN_BACKLOG', 128, 1, 2048);
+
+  return { maxConnections, connectionIdleTimeoutMs, listenBacklog };
 }
 
 function makeOversizeRequestError(current: number, limit: number): string {
@@ -267,9 +291,8 @@ async function safeUnlinkSocketIfExists(socketPath: string): Promise<void> {
   const fs = await import('fs/promises');
   try {
     const st = await fs.lstat(socketPath);
-    const isSocket =
-      typeof (st as { isSocket?: () => boolean }).isSocket === 'function' &&
-      (st as { isSocket: () => boolean }).isSocket();
+    const stWithSocket = st as typeof st & { isSocket?: () => boolean };
+    const isSocket = typeof stWithSocket.isSocket === 'function' && stWithSocket.isSocket();
     const isSymlink = typeof st.isSymbolicLink === 'function' && st.isSymbolicLink();
 
     if (isSocket || isSymlink) {
@@ -303,9 +326,8 @@ async function verifySocketPostBind(socketPath: string): Promise<void> {
   const fs = await import('fs/promises');
   try {
     const st = await fs.lstat(socketPath);
-    const isSocket =
-      typeof (st as { isSocket?: () => boolean }).isSocket === 'function' &&
-      (st as { isSocket: () => boolean }).isSocket();
+    const stWithSocket = st as typeof st & { isSocket?: () => boolean };
+    const isSocket = typeof stWithSocket.isSocket === 'function' && stWithSocket.isSocket();
     if (!isSocket) {
       console.warn(`[F-010] Post-bind check: ${socketPath} is not a socket`);
     }
@@ -343,19 +365,29 @@ function attachIpcServerHandlers(
 ): void {
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
   let activeConnections = 0;
+  // Advisory limit; we still enforce manually
+  (server as { maxConnections?: number }).maxConnections = tunables.maxConnections;
 
   server.on('connection', (client) => {
-    activeConnections++;
-    if (activeConnections > tunables.maxConnections) {
-      activeConnections--; // Decrement since we're rejecting
-      // Immediately destroy the connection without any response
+    if (activeConnections >= tunables.maxConnections) {
+      const response: IPCResponse = {
+        id: 'unknown',
+        error: `Server busy: max connections ${tunables.maxConnections} reached`,
+      };
       try {
-        client.destroy();
+        client.write(JSON.stringify(response) + '\n');
+      } catch {
+        // ignore
+      }
+      try {
+        client.end();
       } catch {
         // ignore
       }
       return;
     }
+
+    activeConnections++;
     let buffer = '';
     let handshakeCompleted = false;
     let idleTimer: NodeJS.Timeout | undefined;
@@ -503,7 +535,6 @@ export async function createIPCServerPath(
   const tunables = getIpcServerTunables();
 
   const server = net.createServer();
-  server.maxConnections = tunables.maxConnections; // Set limit before listening
   attachIpcServerHandlers(server, handler, tunables);
 
   // Prepare umask handling parameters
@@ -593,7 +624,6 @@ export async function createIPCServerFromFD(
 ): Promise<IPCServer> {
   const tunables = getIpcServerTunables();
   const server = net.createServer();
-  server.maxConnections = tunables.maxConnections; // Set limit before listening
   attachIpcServerHandlers(server, handler, tunables);
 
   return new Promise((resolve, reject) => {
@@ -750,3 +780,9 @@ export async function sendIPCRequest(
 export function generateRequestId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
+
+/**
+ * Internal exports for testing IPC limit tuning without exposing as public API.
+ * @internal
+ */
+export { getIpcLimits as __testGetIpcLimits, getIpcServerTunables as __testGetIpcServerTunables };

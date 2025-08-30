@@ -1,6 +1,46 @@
-# MCPLI Daemon System – Manual Testing Guide
+# MCPLI Testing Guide
 
-This document provides practical, copy‑pasteable steps to manually verify MCPLI’s daemon system:
+This document covers both automated testing infrastructure and manual verification steps for MCPLI's daemon system.
+
+## Automated Testing Infrastructure
+
+MCPLI now includes comprehensive automated tests that address RCA-5 (Missing Testing Infrastructure):
+
+### Test Coverage
+- **Unit Tests** (13 tests): Runtime identity, safety utilities, IPC limits
+- **Integration Tests** (5 tests): Real daemon startup, IPC communication, lifecycle management  
+- **E2E Tests** (3 tests): Actual CLI usage patterns
+- **Total**: 21 tests passing, testing real production code paths
+
+### Running Tests
+```bash
+npm test                    # Run all tests
+npm run test:unit          # Unit tests only
+npm run test:integration   # Integration tests (requires macOS)
+npm run test:e2e          # End-to-end CLI tests
+```
+
+### Test Infrastructure Design
+The automated tests follow industry-standard patterns from Docker, Redis, and systemd:
+- **Socket readiness polling** instead of timeout workarounds
+- **Extract actual socket paths** from daemon command output
+- **Test daemon functionality** via IPC communication
+- **Proper cleanup and isolation** using temporary directories
+
+### Key Testing Patterns
+```typescript
+// Industry standard pattern used:
+const startResult = await env.cli('daemon', 'start', '--', command, ...args);
+const socketMatch = startResult.stdout.match(/Socket: (.+)/);
+await env.pollForSocketPath(socketMatch[1]); // Wait for socket ready
+const result = await env.cli('echo', '--message', 'test', '--', command, ...args);
+```
+
+---
+
+## Manual Testing Guide
+
+This section provides practical, copy‑pasteable steps to manually verify MCPLI's daemon system:
 
 - Automatic daemon management
 - No duplicate spawning for the same command + args

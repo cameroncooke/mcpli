@@ -313,7 +313,7 @@ class MCPLIDaemon {
     if (!this.allowShutdown) {
       if (this.debug) {
         console.log(
-          `[DAEMON:${this.processId}] SHUTDOWN BLOCKED - NOT ALLOWED (reason: ${reason || 'unknown'})`,
+          `[DAEMON:${this.processId}] SHUTDOWN BLOCKED - NOT ALLOWED (reason: ${reason ?? 'unknown'})`,
         );
       }
       return;
@@ -323,7 +323,7 @@ class MCPLIDaemon {
 
     if (this.debug) {
       console.log(
-        `[DAEMON:${this.processId}] GRACEFUL SHUTDOWN INITIATED (reason: ${reason || 'unknown'})`,
+        `[DAEMON:${this.processId}] GRACEFUL SHUTDOWN INITIATED (reason: ${reason ?? 'unknown'})`,
       );
     }
 
