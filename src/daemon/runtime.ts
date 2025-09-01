@@ -19,6 +19,7 @@ export interface EnsureOptions {
   env?: Record<string, string>;
   debug?: boolean;
   logs?: boolean;
+  verbose?: boolean;
   quiet?: boolean;
   timeout?: number; // seconds
   timeoutMs?: number; // milliseconds (derived from timeout if not provided)
@@ -45,6 +46,19 @@ export interface EnsureResult {
    * If determinable, the PID of a currently running process (may be undefined for on-demand services).
    */
   pid?: number;
+
+  /**
+   * Orchestrator action taken when ensuring the job:
+   * - 'loaded' when a previously-unloaded job was loaded,
+   * - 'reloaded' when an existing job was updated (bootout + bootstrap),
+   * - 'unchanged' when no plist content change required and loaded state preserved.
+   */
+  updateAction?: 'loaded' | 'reloaded' | 'unchanged';
+
+  /**
+   * True if ensure actively attempted to start the job via kickstart.
+   */
+  started?: boolean;
 }
 
 export interface RuntimeStatus {

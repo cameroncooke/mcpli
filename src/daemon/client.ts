@@ -17,6 +17,7 @@ export interface DaemonClientOptions {
   env?: Record<string, string>;
   debug?: boolean;
   logs?: boolean;
+  verbose?: boolean;
   timeout?: number;
   autoStart?: boolean;
 }
@@ -71,12 +72,18 @@ export class DaemonClient {
       cwd,
       env: this.options.env ?? {},
       debug: this.options.debug,
-      logs: this.options.logs,
+      logs: Boolean(this.options.logs ?? this.options.verbose),
+      verbose: this.options.verbose,
       timeout: this.options.timeout, // Pass seconds, commands.ts will convert to ms
-      preferImmediateStart: false, // Don't restart daemon if already running
+      preferImmediateStart: Boolean(
+        this.options.logs ?? this.options.verbose ?? this.options.debug,
+      ),
     });
     if (this.options.debug) {
       console.timeEnd('[DEBUG] orchestrator.ensure');
+      console.debug(
+        `[DEBUG] ensure result: action=${ensureRes.updateAction ?? 'unchanged'}, started=${ensureRes.started ? '1' : '0'}, pid=${typeof ensureRes.pid === 'number' ? ensureRes.pid : 'n/a'}`,
+      );
     }
 
     const request = {

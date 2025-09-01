@@ -164,28 +164,32 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
  * Stream daemon logs using the system 'tail' command on macOS.
  * Looks for .mcpli/daemon.log in the current working directory.
  */
-export async function handleDaemonLogs(options: DaemonCommandOptions = {}): Promise<void> {
-  const cwd = options.cwd ?? process.cwd();
-  const logPath = path.join(cwd, '.mcpli', 'daemon.log');
+export async function handleDaemonLogs(): Promise<void> {
+  console.log('Streaming OSLog for all MCPLI daemons:');
+  console.log('Press Ctrl+C to exit\n');
 
-  try {
-    await fs.stat(logPath);
-  } catch {
-    console.error(
-      'No daemon log file found. Start logging with: mcpli daemon start --logs -- <command> [args...]',
-    );
-    process.exit(1);
-  }
+  // Stream all MCPLI daemon logs from OSLog
+  const predicate = 'composedMessage CONTAINS "[MCPLI:"';
+  const proc = spawn(
+    '/bin/sh',
+    ['-c', `/usr/bin/log stream --style compact --predicate '${predicate}' 2>/dev/null`],
+    {
+      stdio: ['ignore', 'inherit', 'ignore'],
+    },
+  );
 
-  const tailArgs = ['-n', '200', '-F', logPath];
-  const cp = spawn('tail', tailArgs, { stdio: 'inherit' });
+  // Handle Ctrl+C gracefully
+  process.on('SIGINT', () => {
+    proc.kill('SIGTERM');
+    process.exit(0);
+  });
 
   await new Promise<void>((resolve, reject) => {
-    cp.on('exit', (code) => {
+    proc.on('exit', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`tail exited with code ${code}`));
+      else reject(new Error(`log stream exited with code ${code}`));
     });
-    cp.on('error', reject);
+    proc.on('error', reject);
   });
 }
 
@@ -205,7 +209,6 @@ export function printDaemonHelp(): void {
   console.log('');
   console.log('Options:');
   console.log('  --force                          Force stop daemon');
-  console.log('  --logs                           Enable daemon logging');
   console.log('  --debug                          Enable debug output');
   console.log('  --quiet, -q                      Suppress informational output');
   console.log('  --timeout=<seconds>              Set daemon inactivity timeout (seconds)');

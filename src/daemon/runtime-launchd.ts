@@ -109,6 +109,48 @@ async function writeFileAtomic(
 }
 
 /**
+ * Write or update plist; if content changed and job is loaded, unload and reload.
+ * Returns:
+ *  - 'reloaded' when a loaded job was updated and reloaded,
+ *  - 'loaded' when a previously-unloaded job was loaded,
+ *  - 'unchanged' when no change was required.
+ */
+async function writeOrUpdatePlist(
+  plistFile: string,
+  contents: string,
+  label: string,
+): Promise<'reloaded' | 'loaded' | 'unchanged'> {
+  const existed = existsSync(plistFile);
+  let changed = true;
+  if (existed) {
+    try {
+      const prev = await fs.readFile(plistFile, 'utf8');
+      changed = prev !== contents;
+    } catch {
+      // Treat unreadable file as changed
+      changed = true;
+    }
+  }
+
+  if (!existed || changed) {
+    await writeFileAtomic(plistFile, contents, 0o600);
+    const wasLoaded = await isLoaded(label).catch(() => false);
+    if (wasLoaded) {
+      await bootoutLabel(label).catch(() => {});
+    }
+    await bootstrapPlist(plistFile);
+    return wasLoaded ? 'reloaded' : 'loaded';
+  } else {
+    const loaded = await isLoaded(label).catch(() => false);
+    if (!loaded) {
+      await bootstrapPlist(plistFile);
+      return 'loaded';
+    }
+    return 'unchanged';
+  }
+}
+
+/**
  * Safe unlink - ignore ENOENT and other benign errors.
  */
 async function unlinkIfExists(p: string): Promise<void> {
@@ -208,7 +250,6 @@ function buildPlistXml(spec: {
   env: Record<string, string>;
   socketNameKey: string; // environment key (e.g., MCPLI_SOCKET)
   socketPath: string;
-  logsPath?: string;
   machServices?: string[];
 }): string {
   const {
@@ -218,7 +259,6 @@ function buildPlistXml(spec: {
     env,
     socketNameKey,
     socketPath,
-    logsPath,
     machServices,
   } = spec;
 
@@ -250,13 +290,8 @@ ${envEntries
     </dict>
   </dict>`;
 
-  const logsXml = logsPath
-    ? `
-  <key>StandardOutPath</key>
-  <string>${xmlEscape(logsPath)}</string>
-  <key>StandardErrorPath</key>
-  <string>${xmlEscape(logsPath)}</string>`
-    : '';
+  // No log files - use OSLog instead for automatic cleanup
+  const logsXml = '';
 
   const machServicesXml =
     machServices && machServices.length > 0
@@ -351,11 +386,37 @@ async function bootoutLabel(label: string): Promise<void> {
 }
 
 /**
- * Kickstart a job immediately (force start).
+ * Kickstart a job immediately (optionally kill+restart).
  */
-async function kickstartLabel(label: string): Promise<void> {
+async function kickstartLabel(label: string, opts: { kill?: boolean } = {}): Promise<void> {
   const domain = userLaunchdDomain();
-  await runLaunchctl(['kickstart', '-k', `${domain}/${label}`]);
+  const args = ['kickstart'];
+  if (opts.kill) args.push('-k');
+  await runLaunchctl([...args, `${domain}/${label}`]);
+}
+
+/**
+ * Decide whether to kickstart and whether to kill a running job.
+ * Policy:
+ * - If preferImmediateStart is false: never start here (rely on socket-activation).
+ * - If updateAction is 'loaded' or 'reloaded': start without kill.
+ * - If updateAction is 'unchanged':
+ *    - If not running: start without kill.
+ *    - If running: do nothing.
+ */
+function shouldKickstart(
+  preferImmediateStart: boolean,
+  updateAction: 'loaded' | 'reloaded' | 'unchanged',
+  running: boolean,
+): { start: boolean; kill: boolean } {
+  if (!preferImmediateStart) return { start: false, kill: false };
+  if (updateAction === 'loaded' || updateAction === 'reloaded') {
+    return { start: true, kill: false };
+  }
+  if (!running) {
+    return { start: true, kill: false };
+  }
+  return { start: false, kill: false };
 }
 
 /**
@@ -409,15 +470,14 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     );
 
     // Build environment for wrapper
-    const logsPath = opts.logs ? path.join(cwd, '.mcpli', 'daemon.log') : undefined;
-    const env: Record<string, string> = {
+    const wantLogs = Boolean(opts.logs ?? opts.verbose);
+    // No log files - use OSLog instead for automatic cleanup
+    // Base daemon environment (affects identity) - excludes MCPLI diagnostic flags
+    const daemonEnv: Record<string, string> = {
       MCPLI_ORCHESTRATOR: 'launchd',
       MCPLI_SOCKET_ENV_KEY: 'MCPLI_SOCKET',
       MCPLI_SOCKET_PATH: socketPath, // optional: for compatibility and diagnostics
       MCPLI_CWD: cwd,
-      MCPLI_DEBUG: opts.debug ? '1' : '0',
-      MCPLI_LOGS: opts.logs ? '1' : '0',
-      MCPLI_QUIET: opts.quiet ? '1' : '0',
       MCPLI_TIMEOUT: String(
         typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs)
           ? opts.timeoutMs
@@ -429,41 +489,64 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       MCPLI_ARGS: JSON.stringify(args),
       MCPLI_SERVER_ENV: JSON.stringify(opts.env ?? {}),
       MCPLI_ID_EXPECTED: id,
+      // Add user's MCP server environment (from command spec after --)
+      ...identityEnv,
     };
+
+    // Write current diagnostic configuration to a file for the wrapper to read
+    const diagnosticConfigPath = path.join(cwd, '.mcpli', `diagnostic-${id}.json`);
+    const diagnosticConfig = {
+      debug: Boolean(opts.debug),
+      logs: Boolean(wantLogs),
+      verbose: Boolean(opts.verbose),
+      quiet: Boolean(opts.quiet),
+    };
+    await fs.writeFile(diagnosticConfigPath, JSON.stringify(diagnosticConfig), 'utf8');
+
+    // Keep plist ProgramArguments constant - no diagnostic flags
+    const wrapperArgs = [wrapperPath];
 
     // Generate and write plist
     const plistContent = buildPlistXml({
       label,
-      programArguments: [nodeExec, wrapperPath],
+      programArguments: [nodeExec, ...wrapperArgs],
       workingDirectory: cwd,
-      env,
+      env: daemonEnv,
       socketNameKey: 'MCPLI_SOCKET',
       socketPath,
-      logsPath,
+      // No log files - use OSLog instead
       // Remove machServices - not needed for socket activation
     });
 
     const pPath = this.plistPath(cwd, id);
-    await writeFileAtomic(pPath, plistContent, 0o600);
+    const updateAction = await writeOrUpdatePlist(pPath, plistContent, label);
 
-    // Bootstrap if not loaded
-    if (!(await isLoaded(label))) {
-      await bootstrapPlist(pPath);
+    // Inspect current state
+    let { running, pid } = await getRunningState(label);
+
+    // Decide whether to kickstart (without kill by default) based on policy
+    const { start, kill } = shouldKickstart(
+      Boolean(opts.preferImmediateStart),
+      updateAction,
+      running,
+    );
+    let started = false;
+    if (start) {
+      await kickstartLabel(label, { kill });
+      started = true;
+      // Re-sample state to capture PID if it started
+      const state = await getRunningState(label);
+      running = state.running;
+      pid = state.pid;
     }
-
-    // Optionally start immediately
-    if (opts.preferImmediateStart) {
-      await kickstartLabel(label);
-    }
-
-    // Attempt to discover running state
-    const { running, pid } = await getRunningState(label);
 
     return {
       id,
       label,
       socketPath,
       pid: running ? pid : undefined,
+      updateAction,
+      started,
     };
   }
 

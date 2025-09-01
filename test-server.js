@@ -75,17 +75,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case 'echo':
+      console.error(`[TOOL] echo called with message: ${args.message}`);
       return {
         content: [{ type: 'text', text: args.message }]
       };
     case 'fail':
+      console.error(`[TOOL] fail called with message: ${args.message || 'no message'}`);
       throw new Error(args.message || 'This is an intentional failure.');
     case 'delay':
+      console.error(`[TOOL] delay called with duration: ${args.duration_ms}ms`);
       await new Promise(resolve => setTimeout(resolve, args.duration_ms));
+      console.error(`[TOOL] delay completed after ${args.duration_ms}ms`);
       return {
         content: [{ type: 'text', text: `Delayed for ${args.duration_ms}ms` }]
       };
     default:
+      console.error(`[TOOL] unknown tool called: ${name}`);
       throw new Error(`Unknown tool: ${name}`);
   }
 });

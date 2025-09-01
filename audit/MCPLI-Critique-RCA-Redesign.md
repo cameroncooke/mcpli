@@ -147,47 +147,40 @@ class WindowsServiceOrchestrator implements Orchestrator { ... }
 - Dependency audit and pinning strategy
 **Effort**: Medium (M) - essential before any architectural changes
 
-### RCA-6: MCP Server stderr Completely Broken (F-018)
+### RCA-6: MCP Server stderr Completely Broken (F-018) ✅ RESOLVED
 
 **Symptom**: MCP server stderr never shows, even with `--debug` or `--logs` flags
 **Impact**: Impossible to debug MCP server issues; critical for development workflow
-**Root Cause**: Stderr inheritance broken in launchd daemon environment
-**Evidence**:
-- `wrapper.ts:166` - `stderr: this.debug || this.logs ? 'inherit' : 'ignore'`
-- Weather server has `console.error('Weather MCP Server running...')` but never appears
-- Even fresh daemon start with `--debug` shows no server stderr
-- `.mcpli/daemon.log` remains empty despite `--logs` flag
+**Root Cause**: Two-part issue: (1) Plist changes weren't applied to running launchd jobs, (2) stderr inheritance logic excluded verbose flag
 
-**Current Broken Behavior**:
-- `--verbose`: No effect (documented but non-functional)
-- `--debug`: Shows MCPLI debug but no MCP server stderr
-- `--logs`: Creates empty daemon.log file
-- No way to see server startup messages or error output
+**Resolution Implemented** (2025-08-31):
+- ✅ **Fixed plist reload logic**: Added `writeOrUpdatePlist()` helper that detects content changes and reloads launchd jobs via `bootoutLabel()` + `bootstrapPlist()`
+- ✅ **Added verbose support**: Extended `EnsureOptions` with `verbose?: boolean` and `preferImmediateStart?: boolean`
+- ✅ **Fixed stderr routing**: Changed from `this.debug || this.logs` to `this.logs || this.verbose` in wrapper.ts
+- ✅ **Environment propagation**: Added `MCPLI_VERBOSE` environment variable propagation through the entire chain
+- ✅ **Live terminal display**: Implemented `spawnLiveLogFollower()` using `tail -F` for `--verbose` flag
+- ✅ **Fixed xmlEscape**: Corrected broken XML escaping function for proper plist generation
 
-**Expected Behavior**:
-- `--verbose`: Show MCP server stderr only (clean separation for debugging)
-- `--debug`: Show MCPLI infrastructure debug messages
-- `--logs`: Capture server stderr to daemon.log file
-- Normal mode: Clean output for JSON parsing/automation
+**Technical Details**:
+- `EnsureOptions` interface extended with verbose and preferImmediateStart flags
+- `runtime-launchd.ts`: Sets `logsPath` when `logs OR verbose` is true, propagates `MCPLI_VERBOSE`
+- `wrapper.ts`: Reads `MCPLI_VERBOSE` environment variable and includes it in stderr routing decision
+- `client.ts`: Passes `preferImmediateStart: true` when diagnostic flags are used to force daemon reload
+- `mcpli.ts`: Added live log follower that spawns `tail -F` during `--verbose` tool execution
 
-**Root Cause Analysis**:
-The issue likely stems from launchd process inheritance and stdio redirection. The `StdioClientTransport` may not be properly inheriting stderr in the launchd-spawned daemon environment.
+**New Behavior After Fix**:
+- **`--verbose`**: Shows MCP server stderr live in terminal + captures to `daemon.log`
+- **`--logs`**: Captures MCP server stderr to `daemon.log` only (no terminal display)
+- **`--debug`**: Shows MCPLI infrastructure debug messages (unchanged)
+- **Normal mode**: Clean output for JSON parsing/automation (unchanged)
 
-**Proposed Solution**:
-1. **Immediate**: Add `MCPLI_VERBOSE` support for future use
-2. **Investigate**: Debug why `inherit` stderr isn't working in launchd context
-3. **Alternative**: Consider explicit stderr capture and relay through IPC
-4. **Logging**: Fix `--logs` to actually capture stderr to daemon.log
+**Validation Results**:
+- ✅ Test server `console.error('Simple Test MCP Server running...')` now appears in terminal with `--verbose`
+- ✅ stderr properly captured to `.mcpli/daemon.log` with both `--logs` and `--verbose`
+- ✅ `daemon logs` command successfully displays captured stderr
+- ✅ All existing functionality preserved: lint passes, typecheck passes, build succeeds
 
-**Technical Implementation**:
-- Add `verbose?: boolean` to `EnsureOptions` interface
-- Add `MCPLI_VERBOSE: opts.verbose ? '1' : '0'` in runtime-launchd.ts
-- Add `this.verbose = process.env.MCPLI_VERBOSE === '1'` in wrapper.ts
-- Update stderr logic: `stderr: this.verbose || this.debug || this.logs ? 'inherit' : 'ignore'`
-- **Investigate**: Why `inherit` doesn't work in launchd daemon context
-
-**Effort**: Medium (M) - requires debugging launchd stdio inheritance
-**Risk**: Medium - may need architectural changes to stderr handling
+**Effort**: Medium (M) - **COMPLETED**
 
 ### RCA-5: Missing Testing Infrastructure (F-016, F-017) ✅ PARTIALLY COMPLETED
 
