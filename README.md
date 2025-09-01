@@ -266,14 +266,15 @@ mcpli daemon start -- API_KEY=dev node weather-server.js
 mcpli daemon start -- API_KEY=prod node weather-server.js
 ```
 
-Each daemon is isolated with its own files in `.mcpli/`:
-- **Lock file**: `.mcpli/daemon-{hash}.lock` - Contains process info and metadata
+Each daemon is isolated with its own socket in `.mcpli/`:
 - **Socket file**: `.mcpli/daemon-{hash}.sock` - Unix socket for IPC communication
 
 The hash ensures that identical configurations reuse the same daemon, while different configurations get separate processes. This allows you to run multiple MCP servers simultaneously without conflicts.
 
+Daemon lifecycle is managed by macOS launchd - no lock files are used.
+
 > [!NOTE]
-> It's recommended to add .mcpli/ to your .gitignore file to avoid committing the lock and socket files.
+> It's recommended to add .mcpli/ to your .gitignore file to avoid committing the socket files.
 
 **Shell environment does not affect daemon identity**
 - Only environment variables provided after -- as KEY=VALUE tokens (CommandSpec env) are considered when computing the daemon ID.
