@@ -668,7 +668,7 @@ mcpli daemon start -- node weather-server.js
 # Make socket unreadable
 chmod 000 .mcpli/daemon-*.sock
 
-# Try to use daemon (should fallback)
+# Try to use daemon (should NOT fallback)
 mcpli --debug get-weather --location "NYC" -- node weather-server.js
 
 # Restore permissions
