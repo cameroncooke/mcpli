@@ -8,11 +8,29 @@
  * for MCPLI commands.
  */
 
-import { createIPCServer, createIPCServerFromFD, IPCRequest, IPCServer } from './ipc.ts';
+import { createIPCServer, createIPCServerFromLaunchdSocket, IPCRequest, IPCServer } from './ipc.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { computeDaemonId, deriveIdentityEnv } from './runtime.ts';
 import { spawn } from 'child_process';
+
+function osLog(message: string): void {
+  try {
+    const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
+    logger.stdin.write(message + '\n');
+    logger.stdin.end();
+  } catch {
+    // ignore logger errors
+  }
+}
+
+function validateSocketName(name: string): string {
+  const key = (name ?? '').trim() || 'MCPLI_SOCKET';
+  if (!/^[A-Za-z0-9_]+$/.test(key)) {
+    throw new Error(`Invalid socket name key '${key}'. Expected [A-Za-z0-9_]+`);
+  }
+  return key;
+}
 
 class MCPLIDaemon {
   private mcpClient: Client | null = null;
@@ -36,8 +54,6 @@ class MCPLIDaemon {
   private serverEnv: Record<string, string>;
   private orchestrator: string;
   private socketEnvKey: string;
-  private socketFd?: number;
-  private socketFdSource?: string;
   private socketPath?: string;
 
   constructor() {
@@ -45,7 +61,7 @@ class MCPLIDaemon {
     this.processId = Math.random().toString(36).substring(7);
 
     // Launchd-provided environment
-    this.socketEnvKey = process.env.MCPLI_SOCKET_ENV_KEY ?? 'MCPLI_SOCKET';
+    this.socketEnvKey = validateSocketName(process.env.MCPLI_SOCKET_ENV_KEY ?? 'MCPLI_SOCKET');
     this.cwd = process.env.MCPLI_CWD ?? process.cwd();
     this.debug = process.env.MCPLI_DEBUG === '1';
     this.verbose = process.env.MCPLI_VERBOSE === '1';
@@ -60,35 +76,7 @@ class MCPLIDaemon {
     this.orchestrator = process.env.MCPLI_ORCHESTRATOR ?? 'standalone';
     this.socketPath = process.env.MCPLI_SOCKET_PATH ?? undefined; // diagnostic only
 
-    // Socket FD discovery for launchd fallback (if socket-activation fails)
-    const socketKey = this.socketEnvKey;
-    const launchdFdEnv = `LAUNCH_JOB_SOCKET_FD_${socketKey}`;
-    const candidates = [launchdFdEnv, socketKey];
-
-    let fdNum: number | undefined;
-    let source: string = 'unknown';
-
-    // Try environment variables first
-    for (const envVar of candidates) {
-      const val = process.env[envVar];
-      if (val != null && val !== '') {
-        const parsed = parseInt(val, 10);
-        if (Number.isFinite(parsed) && parsed > 0) {
-          fdNum = parsed;
-          source = `env var ${envVar}`;
-          break;
-        }
-      }
-    }
-
-    // Fallback to discovered FD from testing
-    if (fdNum === undefined) {
-      fdNum = 4; // First socket FD discovered by testing
-      source = 'discovered launchd socket FD (4)';
-    }
-
-    this.socketFd = fdNum;
-    this.socketFdSource = source;
+    // Socket FD discovery removed: wrapper now relies solely on launchd socket activation via ipc.ts
 
     if (!this.mcpCommand) {
       console.error('[DAEMON] Missing MCPLI_COMMAND in environment');
@@ -115,9 +103,6 @@ class MCPLIDaemon {
         );
         console.log(`[DAEMON:${this.processId}] CWD: ${this.cwd}`);
         console.log(`[DAEMON:${this.processId}] Daemon ID: ${this.daemonId}`);
-        console.log(
-          `[DAEMON:${this.processId}] Socket FD: ${this.socketFd} (${this.socketEnvKey})`,
-        );
         if (this.socketPath) {
           console.log(`[DAEMON] Socket path (diagnostic): ${this.socketPath}`);
         }
@@ -238,37 +223,32 @@ class MCPLIDaemon {
   async startIPCServer(): Promise<void> {
     // Launchd mode: use socket activation to get inherited socket FDs
     if (this.orchestrator === 'launchd') {
-      const socketName = this.socketEnvKey || 'MCPLI_SOCKET';
+      const socketName = this.socketEnvKey;
       try {
         if (this.debug) {
           console.log(`[DAEMON] Using launchd socket activation with name: ${socketName}`);
         }
 
-        // Get socket FDs from launchd via socket-activation package
-        const sockets = await import('socket-activation');
-        const fds = sockets.collect(socketName);
+        this.ipcServer = await createIPCServerFromLaunchdSocket(
+          socketName,
+          this.handleIPCRequest.bind(this),
+        );
 
         if (this.debug) {
-          console.log(
-            `[DAEMON] Collected ${fds.length} socket FDs from launchd: [${fds.join(', ')}]`,
-          );
-        }
-
-        if (fds.length === 0) {
-          throw new Error(`No socket FDs found for launchd socket '${socketName}'`);
-        }
-
-        // Use the first FD to create our IPC server
-        const fd = fds[0];
-        this.ipcServer = await createIPCServerFromFD(fd, this.handleIPCRequest.bind(this));
-
-        if (this.debug) {
-          console.log(`[DAEMON] IPC server listening via launchd socket FD ${fd}`);
+          console.log(`[DAEMON] IPC server listening via launchd socket '${socketName}'`);
         }
         return;
       } catch (err) {
-        console.error(`[DAEMON] Failed to use launchd socket activation:`, err);
-        throw err; // Don't fall back - if launchd socket activation fails, we should fail
+        osLog(
+          `[MCPLI:${this.daemonId}] Launchd socket activation failed for '${socketName}': ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        throw new Error(
+          `Launchd socket activation failed for '${socketName}'. Ensure the plist defines the Sockets->${socketName} entry and that the daemon runs under launchd. Original error: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
     }
 

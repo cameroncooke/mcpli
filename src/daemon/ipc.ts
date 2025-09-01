@@ -644,10 +644,16 @@ export async function createIPCServerFromFD(
   });
 }
 
+function assertValidSocketName(name: string): void {
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    throw new Error(`Invalid launchd socket name '${name}'. Expected [A-Za-z0-9_]+`);
+  }
+}
 export async function createIPCServerFromLaunchdSocket(
   socketName: string,
   handler: (request: IPCRequest) => Promise<unknown>,
 ): Promise<IPCServer> {
+  assertValidSocketName(socketName);
   let fds: number[] = [];
 
   try {
@@ -666,7 +672,9 @@ export async function createIPCServerFromLaunchdSocket(
 
     // Optional fallback only when explicitly allowed (testing)
     if (process.env.MCPLI_ALLOW_FD_FALLBACK === '1') {
-      console.log(`[DEBUG] Using fallback FDs: [4, 5]`);
+      console.warn(
+        `[DEBUG] MCPLI_ALLOW_FD_FALLBACK=1 set. Using test-only FDs: [4, 5]. Do NOT use in production.`,
+      );
       fds = [4, 5];
     }
   }
