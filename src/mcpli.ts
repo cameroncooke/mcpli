@@ -228,7 +228,6 @@ async function discoverToolsEx(
     verbose: options.verbose,
     debug: options.debug,
     timeout: options.timeout, // Pass timeout in seconds, let DaemonClient handle conversion
-    autoStart: true,
     env,
   });
 

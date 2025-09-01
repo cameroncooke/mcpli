@@ -319,7 +319,7 @@ export class DaemonClient {
    ```
 2) CLI parses args and discovers tools:
    - parseCommandSpec() extracts env = { OPENAI_API_KEY: "sk-live" }, command = "node", args = ["weather-server.js"].
-   - discoverToolsEx(...) creates DaemonClient with env and autoStart: true.
+   - discoverToolsEx(...) creates DaemonClient with env.
 3) DaemonClient computes daemonId = computeDaemonId(command, args, env).
 4) DaemonClient calls orchestrator.ensure(...) which writes plist and ensures launchd service.
 5) Client connects to socket; launchd spawns daemon if needed.
