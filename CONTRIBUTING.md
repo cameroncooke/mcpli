@@ -102,16 +102,19 @@ MCPLI consists of several key components:
 ### Core Components
 
 - **`src/mcpli.ts`** - Main CLI entry point and command parsing
-- **`src/daemon/`** - Daemon process management and IPC
-  - `spawn.ts` - Daemon spawning and lifecycle
-  - `lock.ts` - Process locking and daemon identity
-  - `ipc.ts` - Inter-process communication
-  - `wrapper.js` - Daemon wrapper process
+- **`src/daemon/`** - Daemon process management using macOS launchd
+  - `runtime.ts` - Core orchestrator interface and daemon identity logic
+  - `runtime-launchd.ts` - macOS launchd-based orchestrator implementation
+  - `client.ts` - Daemon client for IPC communication
+  - `commands.ts` - Daemon command handling and execution
+  - `wrapper.ts` - In-process daemon wrapper
+  - `ipc.ts` - Unix socket IPC communication
 - **`src/config.ts`** - Configuration management and environment variables
 
 ### Key Features
 
-- **Daemon Management**: Persistent processes with hash-based identity
+- **Daemon Management**: Persistent processes with hash-based identity using launchd supervision
+- **Process Orchestration**: macOS launchd handles daemon lifecycle and socket activation
 - **IPC Communication**: Unix sockets for client-daemon communication
 - **Parameter Parsing**: JSON Schema-aware CLI argument parsing
 - **Help Generation**: Dynamic help from MCP tool schemas

@@ -33,21 +33,25 @@ describe('safety utilities', () => {
   });
 
   it('deepSanitize removes dangerous keys and rehydrates objects safely', () => {
-    const input = {
-      __proto__: { polluted: true },
-      safe: 'ok',
-      nested: {
-        constructor: 'nope',
-        good: [ { prototype: 'bad' }, { foo: 'bar' } ]
-      }
-    } as unknown as Record<string, unknown>;
+    // Create input object with dangerous keys as actual own properties
+    const input: Record<string, unknown> = {};
+    Object.defineProperty(input, '__proto__', { value: { polluted: true }, enumerable: true });
+    input.safe = 'ok';
+    input.nested = {
+      constructor: 'nope',
+      good: [
+        Object.defineProperty({}, 'prototype', { value: 'bad', enumerable: true }),
+        { foo: 'bar' }
+      ]
+    };
 
     const out = deepSanitize(input) as Record<string, any>;
 
-    expect(out.__proto__).toBeUndefined();
+    // Should not have dangerous keys as own properties
+    expect(Object.prototype.hasOwnProperty.call(out, '__proto__')).toBe(false);
     expect(out.safe).toBe('ok');
-    expect(out.nested.constructor).toBeUndefined();
-    expect(out.nested.good[0].prototype).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(out.nested, 'constructor')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(out.nested.good[0], 'prototype')).toBe(false);
     expect(out.nested.good[1].foo).toBe('bar');
     // ensure null-prototype objects are used
     expect(Object.getPrototypeOf(out)).toBe(null);

@@ -7,9 +7,9 @@ This document covers both automated testing infrastructure and manual verificati
 MCPLI now includes comprehensive automated tests that address RCA-5 (Missing Testing Infrastructure):
 
 ### Test Coverage
-- **Unit Tests** (13 tests): Runtime identity, safety utilities, IPC limits
-- **Integration Tests** (5 tests): Real daemon startup, IPC communication, lifecycle management  
-- **E2E Tests** (3 tests): Actual CLI usage patterns
+- **Unit Tests**: Runtime identity, safety utilities, IPC limits
+- **Integration Tests**: Real daemon startup, IPC communication, lifecycle management
+- **E2E Tests**: Actual CLI usage patterns
 - **Total**: 21 tests passing, testing real production code paths
 
 ### Running Tests
@@ -51,7 +51,7 @@ This section provides practical, copy‑pasteable steps to manually verify MCPLI
   - weather-server.js
   - complex-test-server.js
 
-All commands assume you are in the MCPLI repository root.
+All commands assume you are in the MCPli repository root.
 
 Requirements:
 - Node.js 18+ (for global fetch and ESM)
@@ -668,7 +668,7 @@ mcpli daemon start -- node weather-server.js
 # Make socket unreadable
 chmod 000 .mcpli/daemon-*.sock
 
-# Try to use daemon (should NOT fallback)
+# Try to use daemon (should fallback)
 mcpli --debug get-weather --location "NYC" -- node weather-server.js
 
 # Restore permissions

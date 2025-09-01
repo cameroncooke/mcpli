@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-MCPLI is a TypeScript CLI tool that transforms stdio-based MCP (Model Context Protocol) servers into first-class command-line tools. It maintains persistent daemon processes for fast, stateful tool execution.
+MCPLI is a TypeScript CLI tool that transforms stdio-based MCP (Model Context Protocol) servers into first-class command-line tools. It maintains persistent daemon processes for fast, stateful tool execution using macOS `launchd` for process orchestration.
 
 ## Key Architecture Principles
 
@@ -26,11 +26,12 @@ MCPLI is a TypeScript CLI tool that transforms stdio-based MCP (Model Context Pr
 
 ### File Structure
 - **Entry point**: `src/mcpli.ts` - CLI argument parsing and tool execution
-- **Daemon system**: `src/daemon/` - Persistent process management
+- **Daemon system**: `src/daemon/` - Persistent process management using launchd
   - `client.ts` - Daemon client for IPC communication
-  - `spawn.ts` - Daemon process spawning and management
+  - `runtime.ts` - Core orchestrator interface and daemon identity logic
+  - `runtime-launchd.ts` - macOS launchd-based orchestrator implementation
   - `wrapper.ts` - In-process daemon wrapper
-  - `lock.ts` - Daemon identity, locking, and state management
+  - `commands.ts` - Daemon command handling and execution
   - `ipc.ts` - Unix socket IPC communication
 - **Test servers**: `weather-server.js`, `test-server.js`, `complex-test-server.js`
 
@@ -78,8 +79,8 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 
 ### Daemon Lifecycle
 1. **Daemon Creation**: Each unique `command + args + env` combination gets its own daemon with SHA-256 hash ID
-2. **IPC Communication**: Unix domain sockets (`.mcpli/daemon-{hash}.sock`)
-3. **Lifecycle Management**: macOS launchd handles daemon supervision and socket activation
+2. **Process Orchestration**: macOS `launchd` handles daemon supervision and socket activation
+3. **IPC Communication**: Unix domain sockets (`.mcpli/daemon-{hash}.sock`)
 4. **Automatic Cleanup**: Configurable inactivity timeout (default: 30 minutes)
 
 ### Configuration System
@@ -95,15 +96,16 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 ## Important Implementation Notes
 
 ### Environment Variable Behavior
-The `deriveIdentityEnv()` function in `src/daemon/lock.ts` determines which environment variables affect daemon identity. Currently includes all `process.env` except `MCPLI_*` variables, but this may need adjustment based on the architectural requirement that only server command environment should matter.
+The `deriveIdentityEnv()` function in `src/daemon/runtime.ts` determines which environment variables affect daemon identity. Only considers environment variables explicitly provided in the server command (after `--`), ignoring the ambient shell environment to ensure stable identity across different shells and sessions.
 
 ### Command Parsing
 The argument parsing in `src/mcpli.ts` handles the complex `-- <server-command>` syntax and environment variable extraction. Pay attention to the split between mcpli arguments and server command arguments.
 
 ### macOS Implementation Details
+- **launchd Integration**: Uses `launchctl` for daemon lifecycle management and socket activation
 - **Path Normalization**: Commands and paths are normalized for consistent daemon IDs
 - **Socket Permissions**: Unix domain sockets use restrictive permissions (0600)
-- **Process Management**: Handles detached processes and cleanup
+- **Process Supervision**: launchd handles automatic restart and crash recovery
 
 ## Contributing Guidelines
 
