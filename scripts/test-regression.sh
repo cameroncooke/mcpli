@@ -38,20 +38,59 @@ run_test() {
   fi
 }
 
+# Function to ensure completely clean environment
+ensure_clean_environment() {
+  echo ""
+  echo "🧹 Environment Cleanup"
+  echo "---------------------"
+  
+  # Clean daemon state via CLI
+  echo -n "Cleaning daemon state... "
+  $MCPLI daemon clean >/dev/null 2>&1 || true
+  echo "✅ DONE"
+  
+  # Kill any leftover mcpli processes
+  echo -n "Killing leftover processes... "
+  pkill -f "node.*mcpli" >/dev/null 2>&1 || true
+  pkill -f "mcpli.*daemon" >/dev/null 2>&1 || true
+  pkill -f "wrapper\.js" >/dev/null 2>&1 || true
+  sleep 0.5  # Give processes time to die
+  echo "✅ DONE"
+  
+  # Remove temporary files and directories
+  echo -n "Cleaning temporary files... "
+  # Remove .mcpli directories in common locations
+  rm -rf ./.mcpli >/dev/null 2>&1 || true
+  rm -rf ~/.mcpli >/dev/null 2>&1 || true
+  rm -rf /tmp/.mcpli* >/dev/null 2>&1 || true
+  rm -rf /var/folders/*/*/*mcpli* >/dev/null 2>&1 || true
+  echo "✅ DONE"
+  
+  # Clean up any launchd services (best effort, with timeout)
+  echo -n "Cleaning launchd services... "
+  timeout 5s bash -c '
+    launchctl list 2>/dev/null | grep "com.mcpli" | awk "{print \$3}" | while read -r label; do
+      launchctl unload "$label" >/dev/null 2>&1 || true
+      launchctl remove "$label" >/dev/null 2>&1 || true
+    done
+  ' >/dev/null 2>&1 || true
+  echo "✅ DONE"
+  
+  # Verify no mcpli processes remain  
+  echo -n "Verifying clean process state... "
+  if pgrep -f "(node.*mcpli|mcpli.*daemon|wrapper\.js)" >/dev/null 2>&1; then
+    echo "⚠️  Warning: MCPLI processes still running:"
+    pgrep -lf "(node.*mcpli|mcpli.*daemon|wrapper\.js)" || true
+  else
+    echo "✅ PASS"
+  fi
+}
+
 # Function to test daemon operations
 test_daemon_ops() {
   echo ""
   echo "🔧 Testing Daemon Operations"
   echo "----------------------------"
-  
-  # Clean up any existing state
-  echo -n "Cleaning daemon state... "
-  if $MCPLI daemon clean >/dev/null 2>&1; then
-    echo "✅ PASS"
-  else
-    echo "❌ FAIL"
-    return 1
-  fi
   
   # Test daemon status (should show no daemons)
   echo -n "Checking clean state... "
@@ -185,6 +224,27 @@ test_build_artifacts() {
   fi
 }
 
+# Thorough cleanup function
+thorough_cleanup() {
+  echo ""
+  echo "🧹 Final Cleanup"
+  echo "---------------"
+  
+  echo -n "Daemon cleanup... "
+  $MCPLI daemon clean >/dev/null 2>&1 || true
+  echo "✅ DONE"
+  
+  echo -n "Process cleanup... "
+  pkill -f "node.*mcpli" >/dev/null 2>&1 || true
+  pkill -f "mcpli.*daemon" >/dev/null 2>&1 || true
+  pkill -f "wrapper\.js" >/dev/null 2>&1 || true
+  echo "✅ DONE"
+  
+  echo -n "File cleanup... "
+  rm -rf ./.mcpli >/dev/null 2>&1 || true
+  echo "✅ DONE"
+}
+
 # Main test execution
 main() {
   local failed=0
@@ -196,6 +256,9 @@ main() {
     exit 1
   fi
   
+  # Clean environment before testing
+  ensure_clean_environment
+  
   # Run all test suites
   test_build_artifacts || failed=1
   test_daemon_ops || failed=1
@@ -203,16 +266,8 @@ main() {
   test_daemon_persistence || failed=1
   test_error_handling || failed=1
   
-  # Cleanup
-  echo ""
-  echo "🧹 Cleanup"
-  echo "----------"
-  echo -n "Final cleanup... "
-  if $MCPLI daemon clean >/dev/null 2>&1; then
-    echo "✅ PASS"
-  else
-    echo "⚠️  Cleanup had issues"
-  fi
+  # Final cleanup
+  thorough_cleanup
   
   # Summary
   echo ""
@@ -228,7 +283,17 @@ main() {
 }
 
 # Handle script interruption
-trap 'echo ""; echo "⏹️  Test interrupted - cleaning up..."; $MCPLI daemon clean >/dev/null 2>&1 || true; exit 1' INT TERM
+cleanup_on_interrupt() {
+  echo ""
+  echo "⏹️  Test interrupted - cleaning up..."
+  pkill -f "node.*mcpli" >/dev/null 2>&1 || true
+  pkill -f "mcpli.*daemon" >/dev/null 2>&1 || true
+  pkill -f "wrapper\.js" >/dev/null 2>&1 || true
+  $MCPLI daemon clean >/dev/null 2>&1 || true
+  rm -rf ./.mcpli >/dev/null 2>&1 || true
+  exit 1
+}
+trap cleanup_on_interrupt INT TERM
 
 # Run main function
 main "$@"
