@@ -27,7 +27,10 @@ export default defineConfig({
 
     // Set executable permissions for built files
     if (existsSync('dist/mcpli.js')) {
-      chmodSync('dist/mcpli.js', '755');
+      chmodSync('dist/mcpli.js', 0o755);
+    }
+    if (existsSync('dist/daemon/wrapper.js')) {
+      chmodSync('dist/daemon/wrapper.js', 0o755);
     }
 
     // Copy daemon files that aren't bundled - wrapper.ts will be compiled to wrapper.js
