@@ -161,7 +161,7 @@ export function normalizeEnv(env: Record<string, string> = {}): Record<string, s
     const key = process.platform === 'win32' ? k.toUpperCase() : k;
     out[key] = String(v ?? '');
   }
-  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 /**

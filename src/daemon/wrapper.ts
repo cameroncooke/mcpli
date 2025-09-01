@@ -50,7 +50,9 @@ class MCPLIDaemon {
     this.debug = process.env.MCPLI_DEBUG === '1';
     this.verbose = process.env.MCPLI_VERBOSE === '1';
     this.quiet = process.env.MCPLI_QUIET === '1';
-    this.timeoutMs = parseInt(process.env.MCPLI_TIMEOUT ?? '1800000', 10);
+    const timeoutRaw = process.env.MCPLI_TIMEOUT;
+    const timeoutNum = Number(timeoutRaw);
+    this.timeoutMs = Number.isFinite(timeoutNum) && timeoutNum > 0 ? timeoutNum : 30 * 60 * 1000;
     this.mcpCommand = process.env.MCPLI_COMMAND ?? '';
     this.mcpArgs = JSON.parse(process.env.MCPLI_ARGS ?? '[]') as string[];
     this.serverEnv = JSON.parse(process.env.MCPLI_SERVER_ENV ?? '{}') as Record<string, string>;
@@ -167,6 +169,7 @@ class MCPLIDaemon {
       command: resolvedCommand,
       args: this.mcpArgs,
       env: { ...baseEnv, ...this.serverEnv },
+      cwd: this.cwd,
       stderr: 'pipe',
     });
 
