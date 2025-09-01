@@ -168,7 +168,6 @@ export async function handleDaemonLogs(
   args: string[] = [],
   options: DaemonCommandOptions = {},
 ): Promise<void> {
-  let predicate: string;
   let description: string;
 
   if (command?.trim()) {
@@ -176,35 +175,30 @@ export async function handleDaemonLogs(
     const identityEnv = deriveIdentityEnv(options.env ?? {});
     const id = computeDaemonId(command, args, identityEnv);
     description = `Streaming OSLog for daemon ${id} (${command} ${args.join(' ')}):`;
-    predicate = `composedMessage CONTAINS "[MCPLI:${id}]"`;
   } else {
     // Show logs for all MCPLI daemons
     description = 'Streaming OSLog for all MCPLI daemons:';
-    predicate = 'composedMessage CONTAINS "[MCPLI:"';
   }
 
   console.log(description);
-  console.log('Press Ctrl+C to exit\n');
-  const proc = spawn(
-    '/bin/sh',
-    ['-c', `/usr/bin/log stream --style compact --predicate '${predicate}' 2>/dev/null`],
-    {
-      stdio: ['ignore', 'inherit', 'ignore'],
-    },
-  );
+  console.log('Showing recent logs (last 1 hour):\n');
 
-  // Handle Ctrl+C gracefully
-  process.on('SIGINT', () => {
-    proc.kill('SIGTERM');
-    process.exit(0);
+  // Use log show which we know works with eventMessage
+  const logCommand = command
+    ? `/usr/bin/log show --style compact --predicate 'eventMessage CONTAINS "[MCPLI:${computeDaemonId(command, args, deriveIdentityEnv(options.env ?? {}))}"' --last 1h 2>/dev/null`
+    : `/usr/bin/log show --style compact --predicate 'eventMessage CONTAINS "[MCPLI:"' --last 1h 2>/dev/null`;
+
+  const proc = spawn('/bin/sh', ['-c', logCommand], {
+    stdio: ['ignore', 'inherit', 'ignore'],
   });
 
-  await new Promise<void>((resolve, reject) => {
-    proc.on('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`log stream exited with code ${code}`));
+  await new Promise<void>((resolve) => {
+    proc.on('exit', () => {
+      resolve();
     });
-    proc.on('error', reject);
+    proc.on('error', () => {
+      resolve(); // Don't fail on log command errors
+    });
   });
 }
 

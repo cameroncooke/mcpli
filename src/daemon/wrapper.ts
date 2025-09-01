@@ -12,6 +12,7 @@ import { createIPCServer, createIPCServerFromFD, IPCRequest, IPCServer } from '.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { computeDaemonId, deriveIdentityEnv } from './runtime.ts';
+import { spawn } from 'child_process';
 
 class MCPLIDaemon {
   private mcpClient: Client | null = null;
@@ -161,12 +162,12 @@ class MCPLIDaemon {
     // Resolve command path - if it's just "node", use the same node executable as this daemon
     const resolvedCommand = this.mcpCommand === 'node' ? process.execPath : this.mcpCommand;
 
-    // launchd automatically redirects MCP server stderr to OSLog via inheritance
-    // No need for explicit stderr capture - it goes directly to OSLog
+    // Capture MCP server stderr and prefix with daemon ID before forwarding to OSLog
     const transport = new StdioClientTransport({
       command: resolvedCommand,
       args: this.mcpArgs,
       env: { ...baseEnv, ...this.serverEnv },
+      stderr: 'pipe',
     });
 
     this.mcpClient = new Client(
@@ -182,8 +183,66 @@ class MCPLIDaemon {
     // Connect to the MCP server (this spawns the process)
     await this.mcpClient.connect(transport);
 
+    // Handle MCP server stderr with daemon ID prefix
+    this.handleMCPStderr(transport);
+
+    // Log daemon startup to OSLog for monitoring
+    try {
+      const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
+      logger.stdin.write(`[MCPLI:${this.daemonId}] Daemon started and MCP client connected\n`);
+      logger.stdin.end();
+    } catch {
+      // Ignore logger errors - not critical
+    }
+
     if (this.debug) {
       console.log('[DAEMON] MCP client connected');
+    }
+  }
+
+  /**
+   * Handle MCP server stderr by adding daemon ID prefix and forwarding to our stderr
+   * (which launchd will redirect to OSLog)
+   */
+  private handleMCPStderr(transport: StdioClientTransport): void {
+    // Access the child process from the transport (using any due to private property)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    const childProcess = (transport as any)._childProcess as
+      | { stderr?: NodeJS.ReadableStream }
+      | undefined;
+
+    if (childProcess?.stderr) {
+      childProcess.stderr.on('data', (data: Buffer) => {
+        const text = data.toString();
+
+        // Prefix each line with daemon ID for OSLog filtering
+        const prefixedLines = text
+          .split('\n')
+          .map((line) => (line.trim() ? `[MCPLI:${this.daemonId}] ${line}` : ''))
+          .filter((line) => line)
+          .join('\n');
+
+        if (prefixedLines) {
+          // Write to system log for OSLog integration
+          try {
+            const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
+            logger.stdin.write(prefixedLines + '\n');
+            logger.stdin.end();
+          } catch {
+            // Ignore logger errors
+          }
+        }
+      });
+
+      childProcess.stderr.on('error', (err: Error) => {
+        try {
+          const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
+          logger.stdin.write(`[MCPLI:${this.daemonId}] stderr error: ${err.message}\n`);
+          logger.stdin.end();
+        } catch {
+          // Ignore logger errors
+        }
+      });
     }
   }
 
