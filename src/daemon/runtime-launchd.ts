@@ -237,7 +237,12 @@ function socketPathFor(cwd: string, id: string): string {
  * Minimal XML escaping for plist strings.
  */
 function xmlEscape(value: string): string {
-  return value.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 /**
