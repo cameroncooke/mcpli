@@ -199,7 +199,7 @@ Use conventional commits format:
 - `docs:` - Documentation changes
 - `refactor:` - Code refactoring
 - `test:` - Adding tests
-- `chore:` - Build/tooling changes
+- `chore:` - Build/tooling changesxw
 
 ## Code Quality Checklist
 
