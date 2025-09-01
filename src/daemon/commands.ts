@@ -181,24 +181,33 @@ export async function handleDaemonLogs(
   }
 
   console.log(description);
-  console.log('Showing recent logs (last 1 hour):\n');
+  console.log('Press Ctrl+C to exit\n');
 
-  // Use log show which we know works with eventMessage
-  const logCommand = command
-    ? `/usr/bin/log show --style compact --predicate 'eventMessage CONTAINS "[MCPLI:${computeDaemonId(command, args, deriveIdentityEnv(options.env ?? {}))}"' --last 1h 2>/dev/null`
-    : `/usr/bin/log show --style compact --predicate 'eventMessage CONTAINS "[MCPLI:"' --last 1h 2>/dev/null`;
+  // Use the correct predicate for streaming
+  const predicate = command
+    ? `eventMessage CONTAINS "[MCPLI:${computeDaemonId(command, args, deriveIdentityEnv(options.env ?? {}))}"`
+    : `eventMessage CONTAINS "[MCPLI:"`;
 
-  const proc = spawn('/bin/sh', ['-c', logCommand], {
-    stdio: ['ignore', 'inherit', 'ignore'],
+  const proc = spawn(
+    '/bin/sh',
+    ['-c', `/usr/bin/log stream --style compact --predicate '${predicate}' 2>/dev/null`],
+    {
+      stdio: ['ignore', 'inherit', 'ignore'],
+    },
+  );
+
+  // Handle Ctrl+C gracefully
+  process.on('SIGINT', () => {
+    proc.kill('SIGTERM');
+    process.exit(0);
   });
 
-  await new Promise<void>((resolve) => {
-    proc.on('exit', () => {
-      resolve();
+  await new Promise<void>((resolve, reject) => {
+    proc.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`log stream exited with code ${code}`));
     });
-    proc.on('error', () => {
-      resolve(); // Don't fail on log command errors
-    });
+    proc.on('error', reject);
   });
 }
 
