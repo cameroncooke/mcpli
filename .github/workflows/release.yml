@@ -81,7 +81,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "🧪 Testing package creation (dry run)"
-          npm publish --dry-run --access public
+          npm publish "${{ steps.pack.outputs.TARBALL }}" --dry-run --access public
 
       - name: Publish to NPM (production releases only)
         if: github.event_name == 'push'
@@ -99,9 +99,11 @@ jobs:
             NPM_TAG="latest"
           fi
           echo "📦 Publishing to NPM with tag: $NPM_TAG"
-          npm publish --access public --tag "$NPM_TAG"
+          # Publish the exact tarball created earlier with provenance
+          npm publish "${{ steps.pack.outputs.TARBALL }}" --access public --tag "$NPM_TAG" --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release (production releases only)
         if: github.event_name == 'push'
