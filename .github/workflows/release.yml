@@ -141,7 +141,8 @@ jobs:
             - Enhanced CLI ergonomics and discoverability
           files: ${{ steps.pack.outputs.TARBALL }}
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, '-') }}
+          make_latest: ${{ !contains(steps.get_version.outputs.VERSION, '-') }}
 
       - name: Summary
         run: |
