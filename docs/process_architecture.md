@@ -301,7 +301,7 @@ graph TD
 ```
 
 The spawning process implements launchd-based lifecycle management:
-- **No lock files**: Lock files are not used. launchd manages daemon lifecycle tied to a socket.
+- **No lock files in launchd mode**: Lock files are not used when launchd manages daemon lifecycle. Fallback daemon implementation uses `.mcpli/daemon-{hash}.lock` (see README).
 - **On-demand startup**: With preferImmediateStart=false, the client does not kickstart the job; the first socket connection activates the daemon if it isn't already running.
 - **No unconditional restarts**: ensure() never restarts an already-running daemon unless explicitly requested.
 
