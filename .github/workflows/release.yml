@@ -55,21 +55,25 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-            echo "IS_TEST=true" >> $GITHUB_OUTPUT
-            echo "📝 Test version: $VERSION"
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "IS_TEST=true" >> "$GITHUB_OUTPUT"
+            echo "📝 Test version: ${VERSION}"
             # Update package.json version for test releases only
-            npm version $VERSION --no-git-tag-version
+            npm version "${VERSION}" --no-git-tag-version
           else
             VERSION=${GITHUB_REF#refs/tags/v}
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-            echo "IS_TEST=false" >> $GITHUB_OUTPUT
-            echo "🚀 Release version: $VERSION"
-            # For tag-based releases, package.json was already updated by release script
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "IS_TEST=false" >> "$GITHUB_OUTPUT"
+            echo "🚀 Release version: ${VERSION}"
+            # Ensure package.json matches the tag for correct tarball name
+            npm version "${VERSION}" --no-git-tag-version
           fi
 
       - name: Create package
-        run: npm pack
+        id: pack
+        run: |
+          FILE=$(npm pack --json | jq -r '.[0].filename')
+          echo "TARBALL=${FILE}" >> "$GITHUB_OUTPUT"
 
       - name: Test publish (dry run for manual triggers)
         if: github.event_name == 'workflow_dispatch'
@@ -99,7 +103,7 @@ jobs:
 
       - name: Create GitHub Release (production releases only)
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: Release v${{ steps.get_version.outputs.VERSION }}
@@ -131,8 +135,7 @@ jobs:
             - Browse the [changelog](https://github.com/cameroncooke/mcpli/blob/main/CHANGELOG.md) for detailed changes
             - Full MCP server compatibility with stdio transport
             - Enhanced CLI ergonomics and discoverability
-          files: |
-            mcpli-${{ steps.get_version.outputs.VERSION }}.tgz
+          files: ${{ steps.pack.outputs.TARBALL }}
           draft: false
           prerelease: false
 
