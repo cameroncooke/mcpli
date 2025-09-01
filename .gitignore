@@ -45,3 +45,9 @@ Thumbs.db
 
 # Repomix output files
 *repomix*
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Debug/temporary files
+debug-*.js
