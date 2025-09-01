@@ -262,7 +262,6 @@ flowchart TD
     DaemonID --> Paths[Generate File Paths]
 
     subgraph "Generated Paths"
-        Paths --> LockPath[Lock File Path]
         Paths --> SocketPath[Socket File Path]
         Paths --> PlistPath[Launchd Plist Path]
     end
@@ -281,7 +280,7 @@ The identity computation process:
 
 **Label format**: Launchd service labels follow `com.mcpli.<cwdHash>.<daemonId>`, where cwdHash is an 8-character SHA-256 hash of the absolute working directory.
 
-**Socket path**: Sockets are created under a short path to avoid AF_UNIX limits: `<tmpdir>/mcpli/<cwdHash>/<daemonId>.sock`
+**Socket path**: Sockets are created under the macOS `$TMPDIR` base to avoid AF_UNIX limits: `$TMPDIR/mcpli/<cwdHash>/<daemonId>.sock` (typically `/var/folders/.../T/mcpli/<cwdHash>/<daemonId>.sock`).
 
 ### Process Spawning and Management
 
@@ -301,7 +300,7 @@ graph TD
 ```
 
 The spawning process implements launchd-based lifecycle management:
-- **No lock files in launchd mode**: Lock files are not used when launchd manages daemon lifecycle. Fallback daemon implementation uses `.mcpli/daemon-{hash}.lock` (see README).
+- **No lock files**: Launchd-based orchestration does not use lock files. Daemon lifecycle and metadata are managed via plists and sockets.
 - **On-demand startup**: With preferImmediateStart=false, the client does not kickstart the job; the first socket connection activates the daemon if it isn't already running.
 - **No unconditional restarts**: ensure() never restarts an already-running daemon unless explicitly requested.
 
@@ -465,7 +464,7 @@ Each daemon requires a launchd property list file that defines the service confi
     <key>MCPLI_SOCKET_ENV_KEY</key>
     <string>MCPLI_SOCKET</string>
     <key>MCPLI_SOCKET_PATH</key>
-    <string>/tmp/mcpli/{cwd-hash}/{daemon-id}.sock</string>
+    <string>$TMPDIR/mcpli/{cwd-hash}/{daemon-id}.sock</string>
     <key>MCPLI_CWD</key>
     <string>/path/to/working/directory</string>
     <key>MCPLI_DEBUG</key>
@@ -489,7 +488,7 @@ Each daemon requires a launchd property list file that defines the service confi
     <key>MCPLI_SOCKET</key>
     <dict>
       <key>SockPathName</key>
-      <string>/tmp/mcpli/{cwd-hash}/{daemon-id}.sock</string>
+      <string>$TMPDIR/mcpli/{cwd-hash}/{daemon-id}.sock</string>
       <key>SockPathMode</key>
       <integer>384</integer> <!-- 0600 -->
     </dict>
@@ -865,7 +864,7 @@ Resource characteristics:
 - **Memory Footprint**: ~15-30MB per daemon process (varies by MCP server)
 - **CPU Usage**: Minimal during idle, spikes only during active tool execution
 - **File Descriptors**: 3-5 FDs per daemon (socket, pipes, log files)
-- **Disk Space**: <1MB per daemon for lock files, sockets, and logs
+- **Disk Space**: <1MB per daemon for plists, sockets, and logs
 
 ### Concurrent Execution Scaling
 
@@ -1046,7 +1045,7 @@ graph TB
 
     subgraph "File System Permissions"
         SocketPerms[Socket: 0600 (Owner Only)]
-        LockPerms[Lock Files: 0644]
+        PlistPerms[Plist Files: 0600]
         LogPerms[Log Files: 0640]
     end
 
@@ -1069,7 +1068,7 @@ graph TB
 
 1. **File System Security**:
    - Unix domain sockets with 0600 permissions (owner-only access)
-   - Lock files in user-specific directories
+   - Launchd plist files in project `.mcpli/launchd` directory with 0600 permissions
    - Temporary files with restricted permissions
 
 2. **Process Security**:

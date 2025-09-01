@@ -97,7 +97,7 @@ The identity computation process:
 
 **Label format**: Launchd service labels follow `com.mcpli.<cwdHash>.<daemonId>`, where cwdHash is an 8-character SHA-256 hash of the absolute working directory.
 
-**Socket path**: Sockets are created under a short path to avoid AF_UNIX limits: `<tmpdir>/mcpli/<cwdHash>/<daemonId>.sock`
+**Socket path**: Sockets are created under the macOS `$TMPDIR` base to avoid AF_UNIX limits: `$TMPDIR/mcpli/<cwdHash>/<daemonId>.sock` (typically `/var/folders/.../T/mcpli/<cwdHash>/<daemonId>.sock`).
 
 ### Process Spawning and Management
 

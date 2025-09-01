@@ -126,7 +126,7 @@ Expected (example):
   - `PID: 12345`
   - `Command: node /path/to/weather-server.js`
   - `IPC connection: OK`
-  - `Socket: /path/to/repo/.mcpli/daemon-ab12cd34.sock`
+  - `Socket: $TMPDIR/mcpli/<cwdHash>/ab12cd34.sock` (macOS typically `/var/folders/.../T/mcpli/<cwdHash>/ab12cd34.sock`)
 
 ---
 
@@ -299,14 +299,15 @@ Simulate broken IPC for the weather daemon:
 mcpli daemon status
 ```
 
-Note the `Socket:` path for the weather daemon (e.g. `.mcpli/daemon-ab12cd34.sock`).
+Note the `Socket:` path for the weather daemon (e.g. `$TMPDIR/mcpli/<cwdHash>/ab12cd34.sock`).
 
 2) Remove the socket file while the process is still running:
 
 - macOS/Linux:
 
 ```bash
-rm -f .mcpli/daemon-*.sock
+SOCKET=$(mcpli daemon status | awk '/Socket:/ {print $2; exit}')
+rm -f "$SOCKET"
 ```
 
 3) Call a weather tool again with `--debug`:
@@ -507,7 +508,8 @@ Test IPC connection timeout behavior.
 ```bash
 # Start daemon, then break socket manually
 mcpli daemon start --debug -- node weather-server.js
-rm -f .mcpli/daemon-*.sock
+SOCKET=$(mcpli daemon status | awk '/Socket:/ {print $2; exit}')
+rm -f "$SOCKET"
 
 # Try to call tool with broken IPC (should show error)
 mcpli --debug get-weather --location "Berlin" -- node weather-server.js
@@ -519,9 +521,9 @@ Expected:
 
 ## 12) Cleanup scenario testing
 
-### 12.1) Stale lock file cleanup
+### 12.1) Stale metadata cleanup
 
-Test cleanup of stale daemon locks (process no longer exists).
+Test cleanup of stale daemon metadata after a crash or kill.
 
 ```bash
 # Start daemon and note PID
@@ -531,13 +533,16 @@ mcpli daemon status  # Note the PID
 # Kill daemon process directly (simulates crash)
 kill -9 <PID>
 
-# Try daemon status (should clean up stale lock)
+# Try daemon status (should handle non-running process gracefully)
 mcpli daemon status
+
+# Optional: remove any leftover metadata and artifacts
+mcpli daemon clean
 ```
 
 Expected:
-- Status command detects stale lock and cleans it up
-- Shows "No daemons found in this directory" after cleanup
+- Status handles non-running process gracefully
+- Optional cleanup removes any leftover metadata
 
 ### 12.2) Missing socket file recovery
 
@@ -547,8 +552,9 @@ Test daemon recovery when socket file is missing but process is running.
 # Start daemon
 mcpli daemon start -- node weather-server.js
 
-# Remove just the socket file (leave lock)
-rm -f .mcpli/daemon-*.sock
+# Remove just the socket file
+SOCKET=$(mcpli daemon status | awk '/Socket:/ {print $2; exit}')
+rm -f "$SOCKET"
 
 # Check status (should show IPC connection failed)
 mcpli daemon status
@@ -566,15 +572,21 @@ Expected:
 Test cleanup of socket files with no corresponding lock.
 
 ```bash
-# Create orphaned socket file
-mkdir -p .mcpli
-touch .mcpli/daemon-orphan123.sock
+# Create an orphaned socket file at the expected socket base
+SOCKET=$(mcpli daemon status | awk '/Socket:/ {print $2; exit}') || true
+BASE=${SOCKET%/*}
+if [ -z "$BASE" ] || [ "$BASE" = "$SOCKET" ]; then
+  HASH=$(printf "%s" "$(pwd -P)" | shasum -a 256 | awk '{print $1}' | cut -c1-8)
+  BASE="${TMPDIR:-/tmp}/mcpli/$HASH"
+fi
+mkdir -p "$BASE"
+touch "$BASE/orphan-$(date +%s).sock"
 
 # Run cleanup command
 mcpli daemon clean
 
-# Verify orphaned socket was removed
-ls -la .mcpli/
+# Verify orphaned socket was removed (directory may be removed if empty)
+test -d "$BASE" && ls -la "$BASE" || echo "Socket base removed"
 ```
 
 Expected:
@@ -586,10 +598,9 @@ Expected:
 Test cleanup behavior when multiple processes try to clean simultaneously.
 
 ```bash
-# Create some stale files
-mkdir -p .mcpli
-echo '{"pid":999999}' > .mcpli/daemon-stale.lock
-touch .mcpli/daemon-stale.sock
+# Create a dummy stale metadata file (launchd plist)
+mkdir -p .mcpli/launchd
+printf 'invalid-plist' > .mcpli/launchd/orphan-$(date +%s).plist
 
 # Run cleanup in parallel
 mcpli daemon clean & mcpli daemon clean & wait
@@ -637,25 +648,33 @@ Expected:
 - Clear error messages about server startup failure
 - Error handling works appropriately
 
-### 13.3) Malformed daemon lock files
+### 13.3) Malformed daemon metadata
 
-Test recovery from corrupted daemon metadata.
+Validate behavior when daemon metadata is malformed. Only run this test if a metadata
+storage location exists (e.g., launchd plists under `.mcpli/launchd`).
 
 ```bash
-# Create invalid lock file
-mkdir -p .mcpli
-echo "invalid-json" > .mcpli/daemon-bad123.lock
+# Detect existing daemon metadata storage; skip when none exists
+META_DIR=".mcpli/launchd"
+if [ -d "$META_DIR" ] && ls "$META_DIR"/*.plist >/dev/null 2>&1; then
+  echo "Found launchd metadata in $META_DIR; injecting malformed daemon metadata..."
 
-# Try daemon status (should handle gracefully)
-mcpli daemon status
+  # Introduce malformed metadata without touching active jobs
+  printf 'not-a-valid-plist' > "$META_DIR/malformed-$(date +%s).plist"
 
-# Try cleanup (should remove bad lock)
-mcpli daemon clean
+  # Validate CLI handles malformed daemon metadata gracefully
+  mcpli daemon status
+
+  # Optional: cleanup should succeed and remove stray metadata files
+  mcpli daemon clean
+else
+  echo "SKIP: No daemon metadata storage found (.mcpli/launchd/*.plist)"
+fi
 ```
 
 Expected:
-- Status handles invalid JSON gracefully
-- Cleanup removes malformed lock files
+- Status handles malformed daemon metadata gracefully (no crash/hang)
+- If metadata exists, cleanup succeeds and removes stray files
 
 ### 13.4) Network/socket errors
 
@@ -666,13 +685,13 @@ Test IPC error handling.
 mcpli daemon start -- node weather-server.js
 
 # Make socket unreadable
-chmod 000 .mcpli/daemon-*.sock
+for s in $(mcpli daemon status | awk '/Socket:/ {print $2}'); do chmod 000 "$s"; done
 
 # Try to use daemon (should fallback)
 mcpli --debug get-weather --location "NYC" -- node weather-server.js
 
 # Restore permissions
-chmod 600 .mcpli/daemon-*.sock
+for s in $(mcpli daemon status | awk '/Socket:/ {print $2}'); do chmod 600 "$s"; done
 ```
 
 Expected:
@@ -793,13 +812,11 @@ mcpli daemon start --timeout=8 -- node weather-server.js
 # ASSERT INITIAL STATE: Verify daemon is running
 DAEMON_PID=$(mcpli daemon status | grep "PID:" | awk '{print $2}')
 SOCKET_FILE=$(mcpli daemon status | grep "Socket:" | awk '{print $2}')
-LOCK_FILE="${SOCKET_FILE%.sock}.lock"
 
 echo "ASSERT: Daemon PID: $DAEMON_PID"
 test -n "$DAEMON_PID" || { echo "FAIL: No daemon PID found"; exit 1; }
 kill -0 $DAEMON_PID || { echo "FAIL: Daemon process not running"; exit 1; }
 test -S "$SOCKET_FILE" || { echo "FAIL: Socket file missing"; exit 1; }
-test -f "$LOCK_FILE" || { echo "FAIL: Lock file missing"; exit 1; }
 echo "SETUP COMPLETE: Daemon running with PID $DAEMON_PID"
 
 # ACTION: Wait for timeout period to expire (8 seconds + 2 second buffer)
@@ -811,7 +828,6 @@ echo "ASSERTING: Daemon should be terminated and cleaned up"
 mcpli daemon status | grep "No daemons found" || { echo "FAIL: Daemon status shows running daemons"; exit 1; }
 kill -0 $DAEMON_PID 2>/dev/null && { echo "FAIL: Daemon process still exists"; exit 1; } || echo "PASS: Daemon process terminated"
 test -S "$SOCKET_FILE" && { echo "FAIL: Socket file still exists"; exit 1; } || echo "PASS: Socket cleaned up"
-test -f "$LOCK_FILE" && { echo "FAIL: Lock file still exists"; exit 1; } || echo "PASS: Lock cleaned up"
 
 # ASSERT NO ORPHANS: Verify no orphaned processes
 ps aux | grep -v grep | grep "weather-server.js" && { echo "FAIL: Orphaned processes found"; exit 1; } || echo "PASS: No orphaned processes"
@@ -821,9 +837,9 @@ echo "TEST 15.1 PASSED: Automatic timeout termination working correctly"
 
 Expected Results:
 - SETUP: Clean state confirmed, no existing daemons
-- INITIAL STATE: Daemon running with valid PID, socket, and lock files
+- INITIAL STATE: Daemon running with valid PID and socket
 - TIMEOUT ACTION: Daemon automatically terminates after 8 seconds
-- CLEANUP VERIFICATION: All files removed, no orphaned processes
+- CLEANUP VERIFICATION: Socket removed, no orphaned processes
 
 ### 15.2) Optimistic cleanup when starting expired daemons
 
@@ -838,7 +854,6 @@ mcpli daemon status | grep "No daemons found" || { echo "SETUP FAIL: Existing da
 mcpli daemon start --timeout=3 -- node weather-server.js
 FIRST_PID=$(mcpli daemon status | grep "PID:" | awk '{print $2}')
 SOCKET_FILE=$(mcpli daemon status | grep "Socket:" | awk '{print $2}')
-LOCK_FILE="${SOCKET_FILE%.sock}.lock"
 
 echo "SETUP: First daemon PID: $FIRST_PID"
 test -n "$FIRST_PID" || { echo "SETUP FAIL: No daemon started"; exit 1; }
@@ -851,17 +866,7 @@ sleep 5
 # ASSERT EXPIRED STATE: Verify process is dead but files might remain (simulating stale state)
 kill -0 $FIRST_PID 2>/dev/null && { echo "FAIL: Daemon process should be expired"; exit 1; } || echo "ASSERT: First daemon expired"
 
-# Create stale artifacts to simulate unclean shutdown (if they don't exist)
-if [ ! -f "$LOCK_FILE" ]; then
-    echo '{"pid":99999,"socket":"'$SOCKET_FILE'","started":"2024-01-01T00:00:00.000Z"}' > "$LOCK_FILE"
-    echo "SETUP: Created stale lock file for testing"
-fi
-
-# ASSERT STALE STATE: Verify stale artifacts exist
-test -f "$LOCK_FILE" || { echo "SETUP FAIL: No stale lock file to clean"; exit 1; }
-STALE_COUNT=$(ls .mcpli/daemon-*.lock 2>/dev/null | wc -l)
-echo "ASSERT: Found $STALE_COUNT stale lock files before cleanup"
-test "$STALE_COUNT" -gt 0 || { echo "SETUP FAIL: No stale files to test cleanup"; exit 1; }
+# ASSERT STALE STATE: Verify process is expired; metadata cleanup is optional
 
 # ACTION: Start new daemon (should trigger optimistic cleanup)
 echo "Starting new daemon - should clean up stale artifacts"
@@ -886,9 +891,9 @@ mcpli daemon clean
 
 Expected Results:
 - SETUP: Clean state, first daemon starts and expires naturally
-- STALE STATE: Expired daemon leaves artifacts, stale files confirmed
-- CLEANUP ACTION: New daemon startup triggers optimistic cleanup
-- FINAL STATE: Only one daemon running, all stale artifacts removed
+- EXPIRED STATE: First daemon process expires as expected
+- CLEANUP ACTION: New daemon startup proceeds without duplicates
+- FINAL STATE: Only one daemon running
 
 ### 15.3) Long-lived daemon reuse verification
 
@@ -1097,11 +1102,9 @@ mcpli daemon status | grep "No daemons found" || { echo "SETUP FAIL: Existing da
 mcpli daemon start --timeout=5 -- node weather-server.js
 DAEMON_PID=$(mcpli daemon status | grep "PID:" | awk '{print $2}')
 SOCKET_PATH=$(mcpli daemon status | grep "Socket:" | awk '{print $2}')
-LOCK_PATH="${SOCKET_PATH%.sock}.lock"
 
 echo "SETUP: Daemon PID: $DAEMON_PID"
 echo "SETUP: Socket path: $SOCKET_PATH"  
-echo "SETUP: Lock path: $LOCK_PATH"
 
 test -n "$DAEMON_PID" || { echo "SETUP FAIL: No daemon PID"; exit 1; }
 test -n "$SOCKET_PATH" || { echo "SETUP FAIL: No socket path"; exit 1; }
@@ -1109,8 +1112,7 @@ test -n "$SOCKET_PATH" || { echo "SETUP FAIL: No socket path"; exit 1; }
 # ASSERT INITIAL STATE: All resources exist
 kill -0 $DAEMON_PID || { echo "SETUP FAIL: Process not running"; exit 1; }
 test -S "$SOCKET_PATH" || { echo "SETUP FAIL: Socket missing"; exit 1; }
-test -f "$LOCK_PATH" || { echo "SETUP FAIL: Lock file missing"; exit 1; }
-echo "ASSERT: All initial resources confirmed present"
+echo "ASSERT: Initial resources confirmed present"
 
 # Get baseline process count
 INITIAL_WEATHER_PROCS=$(ps aux | grep -v grep | grep weather-server.js | wc -l)
@@ -1128,7 +1130,6 @@ kill -0 $DAEMON_PID 2>/dev/null && { echo "FAIL: Process $DAEMON_PID still exist
 
 # File cleanup  
 test -S "$SOCKET_PATH" && { echo "FAIL: Socket $SOCKET_PATH still exists"; exit 1; } || echo "PASS: Socket cleaned up"
-test -f "$LOCK_PATH" && { echo "FAIL: Lock $LOCK_PATH still exists"; exit 1; } || echo "PASS: Lock cleaned up"
 
 # Zombie process check
 FINAL_WEATHER_PROCS=$(ps aux | grep -v grep | grep weather-server.js | wc -l)
@@ -1149,10 +1150,10 @@ echo "TEST 15.6 PASSED: Process cleanup working correctly"
 ```
 
 Expected Results:
-- SETUP: Daemon started with all resources (PID, socket, lock) confirmed
-- INITIAL STATE: Process running, socket accessible, lock file present
+- SETUP: Daemon started with resources (PID, socket) confirmed
+- INITIAL STATE: Process running, socket accessible
 - TIMEOUT ACTION: 7-second wait allows 5-second timeout + cleanup buffer
-- COMPLETE CLEANUP: Process terminated, all files removed, no zombies
+- COMPLETE CLEANUP: Process terminated, socket removed, no zombies
 
 ## 16) Cleanup
 
