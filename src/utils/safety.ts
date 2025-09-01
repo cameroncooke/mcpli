@@ -44,19 +44,38 @@ export function safeDefine<T extends Record<string, unknown>>(
  * and rehydrating objects as null-prototype records.
  */
 export function deepSanitize<T>(value: T): T {
-  return _deepSanitize(value) as T;
+  return _deepSanitize(value, new WeakMap()) as T;
 }
 
-function _deepSanitize(value: unknown): unknown {
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object') return false;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function _deepSanitize(value: unknown, seen: WeakMap<object, unknown>): unknown {
   if (Array.isArray(value)) {
-    return value.map((v) => _deepSanitize(v));
+    const cached = seen.get(value);
+    if (cached) return cached;
+    const out = value.map((v) => _deepSanitize(v, seen));
+    seen.set(value, out);
+    return out;
   }
   if (value !== null && typeof value === 'object') {
-    const src = value as Record<string, unknown>;
+    const obj = value as object;
+    const cached = seen.get(obj);
+    if (cached) return cached;
+    if (!isPlainObject(obj)) {
+      // Leave non-plain objects (Date, Map, Buffer, TypedArray, etc.) intact
+      return value;
+    }
+    const src = obj as Record<string, unknown>;
     const out = safeEmptyRecord<unknown>();
+    seen.set(obj, out);
     for (const k of Object.keys(src)) {
       if (isUnsafeKey(k)) continue;
-      safeDefine(out, k, _deepSanitize(src[k]));
+      safeDefine(out, k, _deepSanitize(src[k], seen));
     }
     return out;
   }
