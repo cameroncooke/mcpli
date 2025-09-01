@@ -7,6 +7,12 @@
  * 3. Default values (lowest priority)
  */
 
+function parsePositiveIntEnv(key: string, fallback: number): number {
+  const raw = process.env[key];
+  const n = raw === undefined ? Number.NaN : Number.parseInt(String(raw).trim(), 10);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
 export interface MCPLIConfig {
   /** Default daemon inactivity timeout in seconds */
   defaultTimeoutSeconds: number;
@@ -42,18 +48,17 @@ const DEFAULT_CONFIG: MCPLIConfig = {
  */
 export function getConfig(): MCPLIConfig {
   return {
-    defaultTimeoutSeconds: parseInt(
-      process.env[ENV_VARS.MCPLI_DEFAULT_TIMEOUT] ??
-        DEFAULT_CONFIG.defaultTimeoutSeconds.toString(),
-      10,
+    defaultTimeoutSeconds: parsePositiveIntEnv(
+      ENV_VARS.MCPLI_DEFAULT_TIMEOUT,
+      DEFAULT_CONFIG.defaultTimeoutSeconds,
     ),
-    defaultCliTimeoutSeconds: parseInt(
-      process.env[ENV_VARS.MCPLI_CLI_TIMEOUT] ?? DEFAULT_CONFIG.defaultCliTimeoutSeconds.toString(),
-      10,
+    defaultCliTimeoutSeconds: parsePositiveIntEnv(
+      ENV_VARS.MCPLI_CLI_TIMEOUT,
+      DEFAULT_CONFIG.defaultCliTimeoutSeconds,
     ),
-    defaultIpcTimeoutMs: parseInt(
-      process.env[ENV_VARS.MCPLI_IPC_TIMEOUT] ?? DEFAULT_CONFIG.defaultIpcTimeoutMs.toString(),
-      10,
+    defaultIpcTimeoutMs: parsePositiveIntEnv(
+      ENV_VARS.MCPLI_IPC_TIMEOUT,
+      DEFAULT_CONFIG.defaultIpcTimeoutMs,
     ),
   };
 }
@@ -65,8 +70,8 @@ export function getConfig(): MCPLIConfig {
  * 3. Default value
  */
 export function resolveDaemonTimeout(cliTimeout?: number): number {
-  if (cliTimeout !== undefined) {
-    return cliTimeout;
+  if (cliTimeout != null) {
+    return Math.max(1, Math.trunc(cliTimeout));
   }
 
   const config = getConfig();
