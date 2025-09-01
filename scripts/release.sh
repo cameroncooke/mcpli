@@ -263,7 +263,12 @@ if [[ "$SKIP_VERSION_UPDATE" == "false" ]]; then
   echo ""
   echo "📝 Updating version in README.md..."
   # Update version references in code examples using extended regex for precise semver matching
-  run "sed -i '' -E 's/@[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+\.[0-9]+)?(-[a-zA-Z0-9]+\.[0-9]+)*(-[a-zA-Z0-9]+)?/@'"$VERSION"'/g' README.md"
+  # Portable in-place sed for GNU/BSD
+  if sed --version >/dev/null 2>&1; then
+    run "sed -i -E 's/@[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+\.[0-9]+)?(-[A-Za-z0-9]+\.[0-9]+)*(-[A-Za-z0-9]+)?/@'"$VERSION"'/g' README.md"
+  else
+    run "sed -i '' -E 's/@[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+\.[0-9]+)?(-[A-Za-z0-9]+\.[0-9]+)*(-[A-Za-z0-9]+)?/@'"$VERSION"'/g' README.md"
+  fi
 
   # Git operations
   echo ""
