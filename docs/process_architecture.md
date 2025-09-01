@@ -1021,7 +1021,7 @@ const result = await env.cli('echo', '--message', 'test', '--', command, ...args
 **F-017 (Dependency Risk on socket-activation) - VALIDATED**:
 - IPC limits tests validate frame size controls
 - Integration tests confirm socket activation functionality
-- Error handling tests validate fallback behavior
+- Error handling tests validate fail-fast behavior (no fallbacks)
 
 The testing infrastructure ensures that changes to the daemon system, IPC communication, or launchd integration are automatically validated, preventing regressions and providing confidence in system reliability.
 
