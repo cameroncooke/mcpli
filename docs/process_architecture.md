@@ -510,7 +510,7 @@ Each daemon requires a launchd property list file that defines the service confi
 Key configuration elements:
 - **Label**: `com.mcpli.<cwdHash>.<daemonId>`
 - **ProgramArguments**: Path to daemon wrapper executable
-- **EnvironmentVariables**: Complete environment for daemon execution including MCPLI_TIMEOUT in milliseconds
+- **EnvironmentVariables**: Complete environment for daemon execution including MCPLI_TIMEOUT in milliseconds (derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT`)
 - **Sockets**: Socket activation configuration with file paths and permissions
 - **KeepAlive**: `{ SuccessfulExit: false }` to avoid keeping the job alive after clean exit; launchd will start it on the next socket connection
 - **ProcessType**: Background designation for system resource management

@@ -168,6 +168,7 @@ Organised by feature/capability. Each item links to evidence.
   - MCPLI_DEFAULT_TIMEOUT: Daemon inactivity timeout in seconds (default: 1800)
   - MCPLI_CLI_TIMEOUT: CLI operation timeout in seconds (default: 30)
   - MCPLI_IPC_TIMEOUT: IPC connection timeout in milliseconds (default: 10000)
+  - MCPLI_TIMEOUT: Internal daemon wrapper timeout in milliseconds; derived from CLI --timeout or MCPLI_DEFAULT_TIMEOUT (default: 1800000)
   - Configuration via src/config.ts with priority system [E-038]
 - **Feature Flags & Kill Switches:** 
   - --debug flag for diagnostic output
@@ -290,7 +291,7 @@ Unix Socket ← launchd Job ← Socket Activation
 - [E-010] `src/mcpli.ts:390-408` — printToolHelp with schema-based parameter documentation
 - [E-011] `src/daemon/runtime-launchd.ts:200-250` — Daemon creation with unique identity
 - [E-012] `src/daemon/runtime.ts:165-178` — computeDaemonId with SHA-256 hash
-- [E-013] `src/daemon/wrapper.ts:54` — MCPLI_TIMEOUT environment variable (1800000ms default)
+- [E-013] `src/daemon/wrapper.ts:54` — MCPLI_TIMEOUT environment variable in milliseconds (derived from CLI --timeout or MCPLI_DEFAULT_TIMEOUT; default 1800000ms)
 - [E-014] `src/daemon/commands.ts:1-200` — Daemon lifecycle management commands
 - [E-015] `src/daemon/ipc.ts:290-350` — Unix domain socket server creation
 - [E-016] `src/daemon/ipc.ts:30-45` — IPCRequest and IPCResponse interfaces
