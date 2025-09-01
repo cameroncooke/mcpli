@@ -19,7 +19,6 @@ export interface DaemonClientOptions {
   logs?: boolean;
   verbose?: boolean;
   timeout?: number;
-  autoStart?: boolean;
 }
 
 export class DaemonClient {
@@ -32,7 +31,6 @@ export class DaemonClient {
     private options: DaemonClientOptions = {},
   ) {
     this.options = {
-      autoStart: true,
       ...options,
     };
 
