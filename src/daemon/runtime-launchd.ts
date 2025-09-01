@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import os from 'os';
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
@@ -468,11 +469,9 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
 
     // Build ProgramArguments
     const nodeExec = process.execPath; // absolute path to Node
-    const wrapperPath = path.join(
-      path.dirname(new URL(import.meta.url).pathname),
-      'daemon',
-      'wrapper.js',
-    );
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const wrapperPath = path.join(__dirname, 'daemon', 'wrapper.js');
 
     // Build environment for wrapper
     const wantLogs = Boolean(opts.logs ?? opts.verbose);
