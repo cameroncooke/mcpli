@@ -664,9 +664,11 @@ export async function createIPCServerFromLaunchdSocket(
       `[DEBUG] Socket-activation failed: ${error instanceof Error ? error.message : String(error)}`,
     );
 
-    // Fallback: Use discovered FDs from testing (FD 4 and 5 were found)
-    console.log(`[DEBUG] Using fallback FDs: [4, 5]`);
-    fds = [4, 5];
+    // Optional fallback only when explicitly allowed (testing)
+    if (process.env.MCPLI_ALLOW_FD_FALLBACK === '1') {
+      console.log(`[DEBUG] Using fallback FDs: [4, 5]`);
+      fds = [4, 5];
+    }
   }
 
   if (fds.length === 0) {
