@@ -167,6 +167,11 @@ export async function handleDaemonLogs(
   args: string[] = [],
   options: DaemonCommandOptions = {},
 ): Promise<void> {
+  if (process.platform !== 'darwin') {
+    console.error('Daemon logs are only available on macOS.');
+    process.exit(1);
+  }
+
   let description: string;
 
   if (command?.trim()) {
@@ -187,13 +192,9 @@ export async function handleDaemonLogs(
     ? `eventMessage CONTAINS "[MCPLI:${computeDaemonId(command, args, deriveIdentityEnv(options.env ?? {}))}"`
     : `eventMessage CONTAINS "[MCPLI:"`;
 
-  const proc = spawn(
-    '/bin/sh',
-    ['-c', `/usr/bin/log stream --style compact --predicate '${predicate}' 2>/dev/null`],
-    {
-      stdio: ['ignore', 'inherit', 'ignore'],
-    },
-  );
+  const proc = spawn('/usr/bin/log', ['stream', '--style', 'compact', '--predicate', predicate], {
+    stdio: ['ignore', 'inherit', 'ignore'],
+  });
 
   // Handle Ctrl+C gracefully
   process.on('SIGINT', () => {
