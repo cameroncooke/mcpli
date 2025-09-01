@@ -30,12 +30,10 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
-      - name: Clear npm cache and install dependencies
-        run: |
-          npm cache clean --force
-          rm -rf node_modules package-lock.json
-          npm install
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build TypeScript
         run: npm run build
@@ -46,9 +44,8 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
-      # Note: Add test step once tests are implemented
-      # - name: Run tests
-      #   run: npm test
+      - name: Run tests
+        run: npm test
 
       - name: Get version from tag or input
         id: get_version
@@ -65,8 +62,13 @@ jobs:
             echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "IS_TEST=false" >> "$GITHUB_OUTPUT"
             echo "🚀 Release version: ${VERSION}"
-            # Ensure package.json matches the tag for correct tarball name
-            npm version "${VERSION}" --no-git-tag-version
+            # Verify package.json version matches tag
+            PACKAGE_VERSION=$(node -p "require('./package.json').version")
+            if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+              echo "❌ Error: package.json version ($PACKAGE_VERSION) does not match tag version ($VERSION)."
+              exit 1
+            fi
+            echo "✅ package.json version matches tag."
           fi
 
       - name: Create package
