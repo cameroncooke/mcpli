@@ -194,6 +194,7 @@ MCPLI uses a centralized configuration system (src/config.ts) that provides envi
 - **`MCPLI_DEFAULT_TIMEOUT`**: Daemon inactivity timeout in seconds
 - **`MCPLI_CLI_TIMEOUT`**: CLI operation timeout in seconds
 - **`MCPLI_IPC_TIMEOUT`**: IPC connection timeout in milliseconds
+ - **`MCPLI_TIMEOUT`**: Internal daemon wrapper timeout in milliseconds; derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000)
 
 ## Performance Characteristics
 

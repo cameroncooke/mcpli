@@ -84,7 +84,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 4. **Automatic Cleanup**: Configurable inactivity timeout (default: 30 minutes)
 
 ### Configuration System
-- **Environment Variables**: `MCPLI_DEFAULT_TIMEOUT`, `MCPLI_CLI_TIMEOUT`, `MCPLI_IPC_TIMEOUT`
+- **Environment Variables**: `MCPLI_DEFAULT_TIMEOUT`, `MCPLI_CLI_TIMEOUT`, `MCPLI_IPC_TIMEOUT`, `MCPLI_TIMEOUT`
 - **Priority**: CLI args > environment variables > built-in defaults
 - **Timeout Units**: Seconds for CLI (user-facing), milliseconds for internal IPC
 
