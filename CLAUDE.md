@@ -79,7 +79,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 ### Daemon Lifecycle
 1. **Daemon Creation**: Each unique `command + args + env` combination gets its own daemon with SHA-256 hash ID
 2. **IPC Communication**: Unix domain sockets (`.mcpli/daemon-{hash}.sock`)
-3. **State Persistence**: Lock files with daemon metadata (`.mcpli/daemon-{hash}.lock`)
+3. **Lifecycle Management**: macOS launchd handles daemon supervision and socket activation
 4. **Automatic Cleanup**: Configurable inactivity timeout (default: 30 minutes)
 
 ### Configuration System
@@ -89,7 +89,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 
 ### Error Handling
 - **Robust Error Handling**: Provides clear error messages when daemon operations fail
-- **Process Recovery**: Automatic cleanup of stale processes and lock files
+- **Process Recovery**: Automatic cleanup of stale processes and socket files
 - **User-Friendly Messages**: Clear error reporting with actionable guidance
 
 ## Important Implementation Notes
