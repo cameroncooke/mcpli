@@ -84,6 +84,7 @@ MCPLI doesn't replace MCP. It completes it. Keep the standard, ditch the token b
 
 - Node.js 18+
 - Any MCP‑compliant server that uses stdio-based transport
+- macOS (launchd) for daemon orchestration
 
 ### Global Installation
 ```bash
