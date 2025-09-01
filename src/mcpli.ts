@@ -30,7 +30,6 @@ interface GlobalOptions {
   verbose?: boolean;
   timeout?: number;
   daemon?: boolean;
-  force?: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -115,7 +114,6 @@ function parseArgs(argv: string[]): {
       else if (arg === '--quiet' || arg === '-q') globals.quiet = true;
       else if (arg === '--debug') globals.debug = true;
       else if (arg === '--verbose') globals.verbose = true;
-      else if (arg === '--force') globals.force = true;
       else if (arg.startsWith('--timeout=')) {
         globals.timeout = parseInt(arg.split('=')[1], 10);
       }
@@ -661,7 +659,6 @@ async function main(): Promise<void> {
 
       const options = {
         debug: globals.debug,
-        force: globals.force,
         timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
         quiet: globals.quiet,
       };

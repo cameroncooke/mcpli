@@ -10,7 +10,6 @@ import { spawn } from 'child_process';
 
 export interface DaemonCommandOptions {
   cwd?: string;
-  force?: boolean;
   env?: Record<string, string>;
   debug?: boolean;
   logs?: boolean;
@@ -226,7 +225,6 @@ export function printDaemonHelp(): void {
   console.log('  clean                            Clean up all daemon files');
   console.log('');
   console.log('Options:');
-  console.log('  --force                          Force stop daemon');
   console.log('  --debug                          Enable debug output');
   console.log('  --quiet, -q                      Suppress informational output');
   console.log('  --timeout=<seconds>              Set daemon inactivity timeout (seconds)');
