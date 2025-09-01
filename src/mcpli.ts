@@ -735,7 +735,20 @@ async function main(): Promise<void> {
         }
 
         case 'logs': {
-          await handleDaemonLogs();
+          const logsDashIndex = daemonArgs.indexOf('--');
+          if (logsDashIndex !== -1) {
+            let spec;
+            try {
+              spec = parseCommandSpec(daemonArgs.slice(logsDashIndex + 1));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`Error: ${msg}`);
+              process.exit(1);
+            }
+            await handleDaemonLogs(spec.command, spec.args, { ...options, env: spec.env });
+          } else {
+            await handleDaemonLogs();
+          }
           break;
         }
 

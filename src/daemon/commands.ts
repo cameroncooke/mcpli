@@ -161,15 +161,30 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
 }
 
 /**
- * Stream daemon logs using the system 'tail' command on macOS.
- * Looks for .mcpli/daemon.log in the current working directory.
+ * Stream daemon logs using OSLog filtering for specific daemon or all MCPLI daemons.
  */
-export async function handleDaemonLogs(): Promise<void> {
-  console.log('Streaming OSLog for all MCPLI daemons:');
-  console.log('Press Ctrl+C to exit\n');
+export async function handleDaemonLogs(
+  command?: string,
+  args: string[] = [],
+  options: DaemonCommandOptions = {},
+): Promise<void> {
+  let predicate: string;
+  let description: string;
 
-  // Stream all MCPLI daemon logs from OSLog
-  const predicate = 'composedMessage CONTAINS "[MCPLI:"';
+  if (command?.trim()) {
+    // Show logs for specific daemon
+    const identityEnv = deriveIdentityEnv(options.env ?? {});
+    const id = computeDaemonId(command, args, identityEnv);
+    description = `Streaming OSLog for daemon ${id} (${command} ${args.join(' ')}):`;
+    predicate = `composedMessage CONTAINS "[MCPLI:${id}]"`;
+  } else {
+    // Show logs for all MCPLI daemons
+    description = 'Streaming OSLog for all MCPLI daemons:';
+    predicate = 'composedMessage CONTAINS "[MCPLI:"';
+  }
+
+  console.log(description);
+  console.log('Press Ctrl+C to exit\n');
   const proc = spawn(
     '/bin/sh',
     ['-c', `/usr/bin/log stream --style compact --predicate '${predicate}' 2>/dev/null`],
