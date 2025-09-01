@@ -170,51 +170,11 @@ class MCPLIDaemon {
       stderr: 'pipe',
     });
 
-    this.mcpClient = new Client(
-      {
-        name: 'mcpli-daemon',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {},
-      },
-    );
-
-    // Connect to the MCP server (this spawns the process)
-    await this.mcpClient.connect(transport);
-
-    // Handle MCP server stderr with daemon ID prefix
-    this.handleMCPStderr(transport);
-
-    // Log daemon startup to OSLog for monitoring
-    try {
-      const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
-      logger.stdin.write(`[MCPLI:${this.daemonId}] Daemon started and MCP client connected\n`);
-      logger.stdin.end();
-    } catch {
-      // Ignore logger errors - not critical
-    }
-
-    if (this.debug) {
-      console.log('[DAEMON] MCP client connected');
-    }
-  }
-
-  /**
-   * Handle MCP server stderr by adding daemon ID prefix and forwarding to our stderr
-   * (which launchd will redirect to OSLog)
-   */
-  private handleMCPStderr(transport: StdioClientTransport): void {
-    // Access the child process from the transport (using any due to private property)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-    const childProcess = (transport as any)._childProcess as
-      | { stderr?: NodeJS.ReadableStream }
-      | undefined;
-
-    if (childProcess?.stderr) {
-      childProcess.stderr.on('data', (data: Buffer) => {
+    // CRITICAL: Access transport.stderr BEFORE connect() to avoid losing early output
+    const errStream = transport.stderr;
+    if (errStream) {
+      errStream.on('data', (data: Buffer) => {
         const text = data.toString();
-
         // Prefix each line with daemon ID for OSLog filtering
         const prefixedLines = text
           .split('\n')
@@ -234,7 +194,7 @@ class MCPLIDaemon {
         }
       });
 
-      childProcess.stderr.on('error', (err: Error) => {
+      errStream.on('error', (err: Error) => {
         try {
           const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
           logger.stdin.write(`[MCPLI:${this.daemonId}] stderr error: ${err.message}\n`);
@@ -243,6 +203,32 @@ class MCPLIDaemon {
           // Ignore logger errors
         }
       });
+    }
+
+    this.mcpClient = new Client(
+      {
+        name: 'mcpli-daemon',
+        version: '1.0.0',
+      },
+      {
+        capabilities: {},
+      },
+    );
+
+    // Connect to the MCP server (this spawns the process)
+    await this.mcpClient.connect(transport);
+
+    // Log daemon startup to OSLog for monitoring
+    try {
+      const logger = spawn('/usr/bin/logger', ['-t', 'mcpli'], { stdio: 'pipe' });
+      logger.stdin.write(`[MCPLI:${this.daemonId}] Daemon started and MCP client connected\n`);
+      logger.stdin.end();
+    } catch {
+      // Ignore logger errors - not critical
+    }
+
+    if (this.debug) {
+      console.log('[DAEMON] MCP client connected');
     }
   }
 
