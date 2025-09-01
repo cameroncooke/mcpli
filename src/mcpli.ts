@@ -876,6 +876,22 @@ async function main(): Promise<void> {
     // Parse parameters
     const params = parseParams(userArgs, selectedTool, toolName);
 
+    // Validate required parameters
+    if (selectedTool.inputSchema?.required) {
+      const required = selectedTool.inputSchema.required as string[];
+      const missing = required.filter((field) => !(field in params));
+      if (missing.length > 0) {
+        console.error(
+          `Error: Missing required parameter${missing.length > 1 ? 's' : ''}: ${missing.map((p) => `--${p}`).join(', ')}`,
+        );
+        console.error(`\nUse --help for usage information:`);
+        console.error(
+          `  mcpli ${toolName} --help -- ${buildCommandString({ command: childCommand, args: childArgs, env: childEnv })}`,
+        );
+        process.exit(1);
+      }
+    }
+
     if (globals.debug) {
       console.log('[DEBUG] Parameters:', params);
       console.time('[DEBUG] Tool execution');
