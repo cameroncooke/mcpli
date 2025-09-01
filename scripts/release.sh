@@ -100,26 +100,20 @@ validate_version() {
   return 0
 }
 
-# Function to compare versions (returns 1 if first version is greater, 0 if equal, -1 if less)
+# Function to compare versions including prerelease (1 if v1>v2, 0 if equal, -1 if less)
 compare_versions() {
-  local version1=$1
-  local version2=$2
-  
-  # Remove prerelease parts for comparison
-  local v1_stable=$(echo "$version1" | sed -E 's/(-.*)?$//')
-  local v2_stable=$(echo "$version2" | sed -E 's/(-.*)?$//')
-  
-  if [[ "$v1_stable" == "$v2_stable" ]]; then
+  local v1=$1
+  local v2=$2
+  if [[ "$v1" == "$v2" ]]; then
     echo 0
     return
   fi
-  
-  # Use sort -V to compare versions
-  local sorted=$(printf "%s\n%s" "$v1_stable" "$v2_stable" | sort -V)
-  if [[ "$(echo "$sorted" | head -1)" == "$v1_stable" ]]; then
-    echo -1
-  else
+  local highest
+  highest=$(printf "%s\n%s" "$v1" "$v2" | sort -V | tail -1)
+  if [[ "$highest" == "$v1" ]]; then
     echo 1
+  else
+    echo -1
   fi
 }
 
