@@ -51,7 +51,7 @@ This section provides practical, copy‑pasteable steps to manually verify MCPLI
   - weather-server.js
   - complex-test-server.js
 
-All commands assume you are in the MCPli repository root.
+All commands assume you are in the MCPLI repository root.
 
 Requirements:
 - Node.js 18+ (for global fetch and ESM)
