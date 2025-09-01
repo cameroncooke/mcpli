@@ -71,23 +71,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: argsRaw } = request.params ?? {};
+  const args = argsRaw ?? {};
 
   switch (name) {
     case 'echo':
+      if (typeof args.message !== 'string') {
+        throw new Error('echo.message must be a string');
+      }
       console.error(`[TOOL] echo called with message: ${args.message}`);
       return {
         content: [{ type: 'text', text: args.message }]
       };
     case 'fail':
-      console.error(`[TOOL] fail called with message: ${args.message || 'no message'}`);
-      throw new Error(args.message || 'This is an intentional failure.');
+      console.error(`[TOOL] fail called with message: ${args.message ?? 'no message'}`);
+      throw new Error(typeof args.message === 'string'
+        ? args.message
+        : 'This is an intentional failure.');
     case 'delay':
-      console.error(`[TOOL] delay called with duration: ${args.duration_ms}ms`);
-      await new Promise(resolve => setTimeout(resolve, args.duration_ms));
-      console.error(`[TOOL] delay completed after ${args.duration_ms}ms`);
+      const ms = Number(args.duration_ms);
+      if (!Number.isFinite(ms) || ms < 0 || ms > 60000) {
+        throw new Error('delay.duration_ms must be a number between 0 and 60000');
+      }
+      console.error(`[TOOL] delay called with duration: ${ms}ms`);
+      await new Promise(resolve => setTimeout(resolve, ms));
+      console.error(`[TOOL] delay completed after ${ms}ms`);
       return {
-        content: [{ type: 'text', text: `Delayed for ${args.duration_ms}ms` }]
+        content: [{ type: 'text', text: `Delayed for ${ms}ms` }]
       };
     default:
       console.error(`[TOOL] unknown tool called: ${name}`);
