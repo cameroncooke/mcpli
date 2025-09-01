@@ -25,7 +25,7 @@ class MCPLIDaemon {
   private mcpArgs: string[];
   private cwd: string;
   private debug: boolean;
-  private logs: boolean;
+  private verbose: boolean;
   private quiet: boolean;
   private timeoutMs: number;
 
@@ -47,7 +47,7 @@ class MCPLIDaemon {
     this.socketEnvKey = process.env.MCPLI_SOCKET_ENV_KEY ?? 'MCPLI_SOCKET';
     this.cwd = process.env.MCPLI_CWD ?? process.cwd();
     this.debug = process.env.MCPLI_DEBUG === '1';
-    this.logs = process.env.MCPLI_LOGS === '1';
+    this.verbose = process.env.MCPLI_VERBOSE === '1';
     this.quiet = process.env.MCPLI_QUIET === '1';
     this.timeoutMs = parseInt(process.env.MCPLI_TIMEOUT ?? '1800000', 10);
     this.mcpCommand = process.env.MCPLI_COMMAND ?? '';
@@ -161,11 +161,12 @@ class MCPLIDaemon {
     // Resolve command path - if it's just "node", use the same node executable as this daemon
     const resolvedCommand = this.mcpCommand === 'node' ? process.execPath : this.mcpCommand;
 
+    // launchd automatically redirects MCP server stderr to OSLog via inheritance
+    // No need for explicit stderr capture - it goes directly to OSLog
     const transport = new StdioClientTransport({
       command: resolvedCommand,
       args: this.mcpArgs,
       env: { ...baseEnv, ...this.serverEnv },
-      stderr: this.debug || this.logs ? 'inherit' : 'ignore',
     });
 
     this.mcpClient = new Client(
@@ -178,6 +179,7 @@ class MCPLIDaemon {
       },
     );
 
+    // Connect to the MCP server (this spawns the process)
     await this.mcpClient.connect(transport);
 
     if (this.debug) {

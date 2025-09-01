@@ -19,13 +19,14 @@ import {
 } from './daemon/index.ts';
 import { getConfig } from './config.ts';
 import { isUnsafeKey, safeEmptyRecord, safeDefine, deepSanitize } from './utils/safety.ts';
+import path from 'path';
+import { spawn } from 'child_process';
 
 interface GlobalOptions {
   help?: boolean;
   quiet?: boolean;
   raw?: boolean;
   debug?: boolean;
-  logs?: boolean;
   verbose?: boolean;
   timeout?: number;
   daemon?: boolean;
@@ -113,7 +114,6 @@ function parseArgs(argv: string[]): {
       if (arg === '--help' || arg === '-h') globals.help = true;
       else if (arg === '--quiet' || arg === '-q') globals.quiet = true;
       else if (arg === '--debug') globals.debug = true;
-      else if (arg === '--logs') globals.logs = true;
       else if (arg === '--verbose') globals.verbose = true;
       else if (arg === '--force') globals.force = true;
       else if (arg.startsWith('--timeout=')) {
@@ -198,7 +198,6 @@ function parseArgs(argv: string[]): {
       if (!foundToolName) globals.help = true;
     } else if (arg === '--raw') globals.raw = true;
     else if (arg === '--debug') globals.debug = true;
-    else if (arg === '--logs') globals.logs = true;
     else if (arg === '--verbose') globals.verbose = true;
     else if (arg.startsWith('--timeout=')) {
       globals.timeout = parseInt(arg.split('=')[1], 10);
@@ -226,7 +225,7 @@ async function discoverToolsEx(
   }
 
   const daemonClient = new DaemonClient(command, args, {
-    logs: options.logs ?? options.verbose,
+    verbose: options.verbose,
     debug: options.debug,
     timeout: options.timeout, // Pass timeout in seconds, let DaemonClient handle conversion
     autoStart: true,
@@ -477,6 +476,47 @@ function buildCommandString(actualCommand?: {
   return `${envStr}${actualCommand.command}${argsStr}`;
 }
 
+function spawnLiveLogFollower(cwd: string): { stop: () => void } {
+  const logPath = path.join(cwd, '.mcpli', 'daemon.log');
+  const proc = spawn('tail', ['-n', '0', '-F', logPath], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+
+  let stopped = false;
+
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    if (!proc.killed) {
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      setTimeout(() => {
+        if (!proc.killed) {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            // ignore
+          }
+        }
+      }, 500);
+    }
+  };
+
+  process.once('exit', stop);
+  process.once('SIGINT', () => {
+    stop();
+    process.exit(130);
+  });
+  process.once('SIGTERM', () => {
+    stop();
+  });
+
+  return { stop };
+}
+
 function printToolHelp(
   tool: Tool,
   actualCommand?: { command?: string; args?: string[]; env?: Record<string, string> },
@@ -549,7 +589,7 @@ function printHelp(
   console.log('');
   console.log('Global Options:');
   console.log('  --help, -h     Show this help and list all available tools');
-  console.log('  --verbose      Show MCP server output (stderr/logs)');
+  console.log('  --verbose      Show daemon logs during execution');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
 
@@ -622,7 +662,6 @@ async function main(): Promise<void> {
 
       const options = {
         debug: globals.debug,
-        logs: globals.logs ?? globals.verbose,
         force: globals.force,
         timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
         quiet: globals.quiet,
@@ -696,7 +735,7 @@ async function main(): Promise<void> {
         }
 
         case 'logs': {
-          await handleDaemonLogs(options);
+          await handleDaemonLogs();
           break;
         }
 
@@ -830,10 +869,21 @@ async function main(): Promise<void> {
     }
 
     // Execute tool using daemon client
-    const executionResult = await daemonClient.callTool({
-      name: selectedTool.name,
-      arguments: params,
-    });
+    let logFollower: { stop: () => void } | null = null;
+    if (globals.verbose) {
+      logFollower = spawnLiveLogFollower(process.cwd());
+    }
+    let executionResult: ToolCallResult;
+    try {
+      executionResult = await daemonClient.callTool({
+        name: selectedTool.name,
+        arguments: params,
+      });
+    } finally {
+      if (logFollower) {
+        logFollower.stop();
+      }
+    }
 
     if (globals.debug) {
       console.timeEnd('[DEBUG] Tool execution');
