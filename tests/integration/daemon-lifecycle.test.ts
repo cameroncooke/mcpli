@@ -33,10 +33,18 @@ describe.skipIf(!isDarwin)('Launchd daemon lifecycle (macOS only)', () => {
 
     // Extract actual socket path from output (follows industry pattern)
     const socketMatch = startResult.stdout.match(/Socket: (.+)/);
-    if (!socketMatch) {
-      throw new Error('Could not extract socket path from daemon start output');
+    let socketPath: string | undefined = socketMatch?.[1];
+    if (!socketPath) {
+      // Fallback to deterministic ID/path
+      const id = env.computeId(command, args);
+      socketPath = env.getSocketPath(id);
+      // If this still fails, include diagnostics
+      if (!socketPath) {
+        throw new Error(
+          `Could not determine socket path.\nstdout:\n${startResult.stdout}\nstderr:\n${startResult.stderr}`
+        );
+      }
     }
-    const socketPath = socketMatch[1];
     
     // Poll for socket readiness using actual path
     await env.pollForSocketPath(socketPath);

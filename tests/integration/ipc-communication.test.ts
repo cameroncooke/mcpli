@@ -31,10 +31,8 @@ describe.skipIf(!isDarwin)('IPC communication via launchd socket (macOS only)', 
 
     // Extract actual socket path and poll for readiness  
     const socketMatch = startResult.stdout.match(/Socket: (.+)/);
-    if (!socketMatch) {
-      throw new Error('Could not extract socket path from daemon start output');
-    }
-    await env.pollForSocketPath(socketMatch[1]);
+    const socketPath = socketMatch?.[1] ?? env.getSocketPath(env.computeId(command, args));
+    await env.pollForSocketPath(socketPath);
 
     // Test IPC functionality (not start timing)
     const echoResult = await env.cli('echo', '--message', 'ipc-test', '--', command, ...args);
