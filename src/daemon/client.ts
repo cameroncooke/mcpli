@@ -12,19 +12,46 @@ import {
   Orchestrator,
 } from './runtime.ts';
 
+/**
+ * Options for interacting with the MCPLI daemon through the orchestrator.
+ * - `cwd`: Working directory used to scope daemon identities and artifacts.
+ * - `env`: Environment variables to pass to the MCP server (identity-affecting).
+ * - `debug`: Emit detailed timing and diagnostics to stderr.
+ * - `logs`/`verbose`: Request immediate start and stream OSLog in certain flows.
+ * - `timeout`: Inactivity timeout (seconds) for the daemon wrapper.
+ */
 export interface DaemonClientOptions {
+  /** Working directory used to scope daemon identity and artifacts. */
   cwd?: string;
+  /** Environment variables passed to the MCP server (affects identity). */
   env?: Record<string, string>;
+  /** Enable detailed timing and diagnostics. */
   debug?: boolean;
+  /** Suggest immediate start and OSLog streaming in certain flows. */
   logs?: boolean;
+  /** Increase verbosity (may imply logs). */
   verbose?: boolean;
+  /** Inactivity timeout (seconds) for the daemon. */
   timeout?: number;
 }
 
+/**
+ * Lightweight client that ensures the appropriate daemon exists and
+ * proxies a single request over IPC. Automatically computes a stable
+ * daemon id from command/args/env and uses the platform orchestrator
+ * (launchd on macOS) for lifecycle management.
+ */
 export class DaemonClient {
   private daemonId?: string;
   private orchestratorPromise: Promise<Orchestrator>;
 
+  /**
+   * Construct a client for a given MCP server command.
+   *
+   * @param command MCP server executable.
+   * @param args Arguments to the MCP server executable.
+   * @param options Client options controlling env, cwd, and verbosity.
+   */
   constructor(
     private command: string,
     private args: string[],
@@ -44,11 +71,22 @@ export class DaemonClient {
     }
   }
 
+  /**
+   * Query the MCP server (via daemon) for available tools.
+   *
+   * @returns Tool list result from the daemon.
+   */
   async listTools(): Promise<ToolListResult> {
     const result = await this.callDaemon('listTools');
     return result as ToolListResult;
   }
 
+  /**
+   * Execute a specific tool over IPC, returning the raw MCP tool result.
+   *
+   * @param params Tool call parameters including name and arguments.
+   * @returns Raw MCP tool call result.
+   */
   async callTool(params: ToolCallParams): Promise<ToolCallResult> {
     const result = await this.callDaemon('callTool', params);
     return result as ToolCallResult;
@@ -101,6 +139,11 @@ export class DaemonClient {
     return result;
   }
 
+  /**
+   * Lightweight liveness check.
+   *
+   * @returns True if the daemon responds to a ping.
+   */
   async ping(): Promise<boolean> {
     try {
       const result = await this.callDaemon('ping');
@@ -111,6 +154,16 @@ export class DaemonClient {
   }
 }
 
+/**
+ * Helper to create a `DaemonClient`, run an async operation, and return the
+ * result.
+ *
+ * @param command MCP server executable.
+ * @param args Arguments for the MCP server.
+ * @param options Client options (cwd, env, debug, etc.).
+ * @param operation Async function that receives the client and returns a value.
+ * @returns Result of the operation.
+ */
 export async function withDaemonClient<T>(
   command: string,
   args: string[],

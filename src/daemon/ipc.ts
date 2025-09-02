@@ -1,47 +1,93 @@
 import net from 'net';
 import path from 'path';
 
+/**
+ * Parameters for invoking a single MCP tool via the daemon.
+ */
 export interface ToolCallParams {
+  /** The tool name to invoke (as reported by the server). */
   name: string;
+  /** Structured arguments for the tool call. */
   arguments?: Record<string, unknown>;
+  /** Future-proof: additional fields may be passed through. */
   [key: string]: unknown;
 }
 
+/**
+ * Minimal tool descriptor as returned by MCP listTools.
+ */
 export interface Tool {
+  /** Canonical tool name. */
   name: string;
+  /** Human-friendly description, when available. */
   description?: string;
+  /** JSON Schema for input arguments, when provided by the server. */
   inputSchema?: Record<string, unknown>;
 }
 
+/**
+ * Result payload for a listTools call.
+ */
 export interface ToolListResult {
+  /** Array of tools discovered from the server. */
   tools: Tool[];
+  /** Optional metadata field for implementation details. */
   _meta?: Record<string, unknown>;
 }
 
+/**
+ * Result payload for a callTool call.
+ */
 export interface ToolCallResult {
+  /**
+   * Content items, typically including a text blob from the tool run.
+   */
   content?: Array<{
+    /** Content type (commonly 'text'). */
     type: string;
+    /** Text content if present. */
     text?: string;
+    /** Additional fields as provided by the server. */
     [key: string]: unknown;
   }>;
+  /** True if the server signaled an error at the tool-call level. */
   isError?: boolean;
+  /** Optional metadata for debugging or transport.
+   */
   _meta?: Record<string, unknown>;
 }
 
+/**
+ * JSON request frame used over the local IPC socket.
+ */
 export interface IPCRequest {
+  /** Unique request id for correlation. */
   id: string;
+  /** Method name indicating operation. */
   method: 'listTools' | 'callTool' | 'ping';
+  /** Optional method params. */
   params?: ToolCallParams | undefined;
 }
 
+/**
+ * JSON response frame used over the local IPC socket.
+ */
 export interface IPCResponse {
+  /** Echoed request id. */
   id: string;
+  /** Result payload on success. */
   result?: unknown;
+  /** Error message if the request failed. */
   error?: string;
 }
 
+/**
+ * Handle returned when creating an IPC server. Ensures proper cleanup.
+ */
 export interface IPCServer {
+  /** The underlying Node net.Server instance. */
   server: net.Server;
+  /** Asynchronous close that also handles cleanup responsibilities. */
   close: () => Promise<void>;
 }
 
@@ -507,6 +553,14 @@ function attachIpcServerHandlers(
   });
 }
 
+/**
+ * Create a Unix socket IPC server at the given path with secure defaults
+ * (safe unlink on bind, permission tightening, unlink-on-close).
+ *
+ * @param socketPath Absolute path to the Unix socket.
+ * @param handler Async request handler for IPC requests.
+ * @returns An `IPCServer` with a `close()` method for cleanup.
+ */
 export async function createIPCServer(
   socketPath: string,
   handler: (request: IPCRequest) => Promise<unknown>,
@@ -515,6 +569,14 @@ export async function createIPCServer(
   return createIPCServerPath(socketPath, handler, { unlinkOnClose: true, chmod: 0o600 });
 }
 
+/**
+ * Advanced variant of `createIPCServer` with tunable unlink/chmod/umask.
+ *
+ * @param socketPath Absolute path to the Unix socket.
+ * @param handler Async request handler for IPC requests.
+ * @param opts Optional behaviors: unlinkOnClose, chmod mode, secure dir mode, umask during bind.
+ * @returns An `IPCServer` with a `close()` method for cleanup.
+ */
 export async function createIPCServerPath(
   socketPath: string,
   handler: (request: IPCRequest) => Promise<unknown>,
@@ -618,6 +680,13 @@ export async function createIPCServerPath(
   });
 }
 
+/**
+ * Create an IPC server from an already-open socket FD (e.g., launchd).
+ *
+ * @param fd A valid, listening socket file descriptor.
+ * @param handler Async request handler for IPC requests.
+ * @returns An `IPCServer` with a `close()` method for cleanup.
+ */
 export async function createIPCServerFromFD(
   fd: number,
   handler: (request: IPCRequest) => Promise<unknown>,
@@ -649,6 +718,14 @@ function assertValidSocketName(name: string): void {
     throw new Error(`Invalid launchd socket name '${name}'. Expected [A-Za-z0-9_]+`);
   }
 }
+/**
+ * Create an IPC server using launchd socket activation.
+ * Expects a valid `socketName` key present in the launchd plist.
+ *
+ * @param socketName The launchd Sockets dict key to collect.
+ * @param handler Async request handler for IPC requests.
+ * @returns An `IPCServer` with a `close()` method for cleanup.
+ */
 export async function createIPCServerFromLaunchdSocket(
   socketName: string,
   handler: (request: IPCRequest) => Promise<unknown>,
@@ -690,6 +767,14 @@ export async function createIPCServerFromLaunchdSocket(
   return createIPCServerFromFD(fd, handler);
 }
 
+/**
+ * Send a single request over the Unix socket with frame-size safety and timeout.
+ *
+ * @param socketPath Absolute path to the Unix socket to connect to.
+ * @param request Request to send.
+ * @param timeoutMs Request timeout in milliseconds (default 10000ms).
+ * @returns The `result` field from the IPC response, or throws on error.
+ */
 export async function sendIPCRequest(
   socketPath: string,
   request: IPCRequest,
@@ -787,6 +872,11 @@ export async function sendIPCRequest(
   });
 }
 
+/**
+ * Generate a best-effort unique request identifier (time + random suffix).
+ *
+ * @returns A string identifier.
+ */
 export function generateRequestId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }

@@ -12,41 +12,54 @@ import { createHash } from 'crypto';
  * The only orchestrator in this architecture is launchd (macOS).
  * Additional implementations can be added in the future if needed.
  */
+/**
+ * Known orchestrator types. Currently only macOS launchd is supported.
+ */
 export type OrchestratorName = 'launchd';
 
+/**
+ * Options that control how a daemon is ensured/started by the orchestrator.
+ * - `cwd`: Scope job artifacts and identity to this directory.
+ * - `env`: Environment passed through to the MCP server (affects identity).
+ * - `timeout`: Daemon inactivity timeout (seconds). Mutually exclusive with `timeoutMs`.
+ * - `preferImmediateStart`: Start immediately vs rely on socket activation.
+ */
 export interface EnsureOptions {
+  /** Working directory that scopes daemon identity and artifacts. */
   cwd?: string;
+  /** Environment passed to the MCP server process (affects identity). */
   env?: Record<string, string>;
+  /** Enable debug diagnostics and timing. */
   debug?: boolean;
+  /** Request that logs be made available (implementation dependent). */
   logs?: boolean;
+  /** Increase verbosity (may imply logs). */
   verbose?: boolean;
+  /** Suppress routine output where applicable. */
   quiet?: boolean;
-  timeout?: number; // seconds
-  timeoutMs?: number; // milliseconds (derived from timeout if not provided)
+  /** Daemon inactivity timeout in seconds. */
+  timeout?: number;
+  /** Daemon inactivity timeout in milliseconds (overrides `timeout` if set). */
+  timeoutMs?: number;
   /**
    * Hint to start the service immediately rather than lazily on first connection (if supported).
    */
   preferImmediateStart?: boolean;
 }
 
+/**
+ * Result of an ensure call, including the daemon id, socket path, current
+ * process state, and what action (if any) was taken to update the job.
+ */
 export interface EnsureResult {
-  /**
-   * Stable identity derived from normalized (command, args, env).
-   */
+  /** Stable identity derived from normalized (command, args, env). */
   id: string;
-  /**
-   * Absolute path to the Unix domain socket this daemon listens on.
-   */
+  /** Absolute path to the Unix domain socket this daemon listens on. */
   socketPath: string;
-  /**
-   * launchd job label (launchd-specific).
-   */
+  /** launchd job label (launchd-specific). */
   label?: string;
-  /**
-   * If determinable, the PID of a currently running process (may be undefined for on-demand services).
-   */
+  /** PID of a currently running process, if determinable. */
   pid?: number;
-
   /**
    * Orchestrator action taken when ensuring the job:
    * - 'loaded' when a previously-unloaded job was loaded,
@@ -54,44 +67,36 @@ export interface EnsureResult {
    * - 'unchanged' when no plist content change required and loaded state preserved.
    */
   updateAction?: 'loaded' | 'reloaded' | 'unchanged';
-
-  /**
-   * True if ensure actively attempted to start the job via kickstart.
-   */
+  /** True if ensure actively attempted to start the job via kickstart. */
   started?: boolean;
 }
 
+/**
+ * Status entry for a daemon managed under the current working directory.
+ */
 export interface RuntimeStatus {
+  /** Stable daemon id. */
   id: string;
-  /**
-   * launchd label if available.
-   */
+  /** launchd label if available. */
   label?: string;
-  /**
-   * Whether the orchestrator has a loaded job in the domain.
-   */
+  /** Whether the orchestrator has a loaded job in the domain. */
   loaded: boolean;
-  /**
-   * Whether a process is currently running/attached to the job (best-effort).
-   */
+  /** Whether a process is currently running/attached to the job (best-effort). */
   running: boolean;
-  /**
-   * Current PID if discoverable.
-   */
+  /** Current PID if discoverable. */
   pid?: number;
-  /**
-   * Socket path if known.
-   */
+  /** Socket path if known. */
   socketPath?: string;
-  /**
-   * Optional additional metadata fields (e.g., timestamps) may be included by implementations.
-   */
+  /** Optional additional metadata fields (e.g., timestamps). */
   [key: string]: unknown;
 }
 
 /**
  * Core orchestration interface.
  * Implementations should be idempotent and safe to call concurrently.
+ */
+/**
+ * Abstraction for platform-specific daemon orchestration.
  */
 export interface Orchestrator {
   readonly type: OrchestratorName;
@@ -128,6 +133,13 @@ export interface Orchestrator {
  * Normalize command and args across platforms (absolute path, normalized separators).
  * This mirrors the semantics used by identity hashing to ensure cross-process stability.
  */
+/**
+ * Normalize a command and arguments into absolute, platform-stable strings.
+ *
+ * @param command The executable to run.
+ * @param args Arguments to pass to the executable.
+ * @returns Normalized command and args with absolute command path.
+ */
 export function normalizeCommand(
   command: string,
   args: string[] = [],
@@ -155,6 +167,13 @@ export function normalizeCommand(
  * - Keys are sorted to ensure deterministic hashing.
  * - Values are coerced to strings.
  */
+/**
+ * Normalize an environment object for identity hashing: coerces values to
+ * strings and sorts keys (case-insensitive on Windows).
+ *
+ * @param env Environment key/value pairs to normalize.
+ * @returns A new object with normalized and sorted keys.
+ */
 export function normalizeEnv(env: Record<string, string> = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
@@ -166,6 +185,13 @@ export function normalizeEnv(env: Record<string, string> = {}): Record<string, s
 
 /**
  * Derive the effective environment to be used for identity.
+ */
+/**
+ * Derive the effective environment to use for identity hashing from the
+ * explicit CommandSpec-only values provided after `--`.
+ *
+ * @param explicitEnv The explicit env from CommandSpec (after --).
+ * @returns Normalized identity env.
  */
 export function deriveIdentityEnv(
   explicitEnv: Record<string, string> = {},
@@ -190,6 +216,14 @@ export function deriveIdentityEnv(
  * Compute a deterministic 8-char id from normalized command, args, and env.
  * This is the canonical identity for MCPLI daemons and should remain stable across orchestrators.
  */
+/**
+ * Compute a deterministic 8-character id from normalized command, args, and env.
+ *
+ * @param command Executable path or name.
+ * @param args Arguments for the executable.
+ * @param env Identity-affecting environment.
+ * @returns An 8-character hexadecimal id.
+ */
 export function computeDaemonId(
   command: string,
   args: string[] = [],
@@ -204,6 +238,12 @@ export function computeDaemonId(
 
 const DAEMON_ID_REGEX = /^[a-z0-9_-]{1,64}$/i;
 
+/**
+ * Validate daemon id format (1..64 chars of /[a-z0-9_-]/i).
+ *
+ * @param id Candidate id string.
+ * @returns True when the id is valid.
+ */
 export function isValidDaemonId(id: string): boolean {
   return typeof id === 'string' && DAEMON_ID_REGEX.test(id);
 }
@@ -215,6 +255,12 @@ export function isValidDaemonId(id: string): boolean {
  *
  * Note: Uses a runtime dynamic import to avoid compile-time coupling before the
  * concrete implementation (runtime-launchd.ts) is added.
+ */
+/**
+ * Resolve the orchestrator implementation for the current platform.
+ * macOS only in this phase (launchd).
+ *
+ * @returns A resolved orchestrator instance.
  */
 export async function resolveOrchestrator(): Promise<Orchestrator> {
   if (process.platform !== 'darwin') {
@@ -258,6 +304,10 @@ export async function resolveOrchestrator(): Promise<Orchestrator> {
 /**
  * A lightweight base class that orchestrator implementations may extend to inherit
  * common identity behavior. Optional to use.
+ */
+/**
+ * Convenience base class that implements common identity semantics for
+ * orchestrator implementations.
  */
 export abstract class BaseOrchestrator implements Orchestrator {
   abstract readonly type: OrchestratorName;

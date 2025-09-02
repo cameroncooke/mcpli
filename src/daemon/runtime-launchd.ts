@@ -165,6 +165,11 @@ async function unlinkIfExists(p: string): Promise<void> {
 /**
  * launchctl subprocess runner
  */
+/**
+ * Run launchctl safely using an absolute path and robust error handling.
+ * - Uses '/bin/launchctl' to avoid PATH lookups.
+ * - Never rejects: resolves with a non-zero code and captured error message on failure.
+ */
 async function runLaunchctl(
   args: string[],
   opts: { cwd?: string } = {},
@@ -174,7 +179,8 @@ async function runLaunchctl(
   stderr: string;
 }> {
   return new Promise((resolve) => {
-    const cp = spawn('launchctl', args, {
+    let resolved = false;
+    const cp = spawn('/bin/launchctl', args, {
       cwd: opts.cwd ?? process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -182,7 +188,16 @@ async function runLaunchctl(
     let stderr = '';
     cp.stdout.on('data', (d) => (stdout += (d as Buffer).toString()));
     cp.stderr.on('data', (d) => (stderr += (d as Buffer).toString()));
-    cp.on('close', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    cp.on('error', (err) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ code: 127, stdout: '', stderr: String((err as Error)?.message ?? err) });
+    });
+    cp.on('close', (code) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
   });
 }
 
@@ -428,6 +443,10 @@ function shouldKickstart(
 /**
  * Launchd-based orchestrator implementing dynamic, ephemeral jobs.
  */
+/**
+ * macOS launchd-based orchestrator. Manages per-project, per-command daemons
+ * with socket activation and short, collision-safe socket paths.
+ */
 export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
   readonly type = 'launchd' as const;
 
@@ -454,6 +473,15 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
 
   /**
    * Ensure job artifacts exist and are bootstrapped in launchd.
+   */
+  /**
+   * Ensure job artifacts exist and the job is bootstrapped in the user's
+   * launchd domain. Optionally kickstarts the job based on policy.
+   *
+   * @param command Executable for the MCP server.
+   * @param args Arguments to the MCP server executable.
+   * @param opts Ensure options controlling env, cwd, and start policy.
+   * @returns Ensure result with id, socket, label, and process details.
    */
   async ensure(command: string, args: string[], opts: EnsureOptions): Promise<EnsureResult> {
     const cwd = opts.cwd ?? process.cwd();
@@ -557,6 +585,12 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
   /**
    * Stop a specific job by id, or all jobs under cwd if id omitted.
    */
+  /**
+   * Stop a specific job by id or all jobs for the current directory.
+   *
+   * @param id Optional daemon id. Stops all under cwd when omitted.
+   * @returns A promise that resolves when stop actions complete.
+   */
   async stop(id?: string): Promise<void> {
     const cwd = process.cwd();
     if (id) {
@@ -598,6 +632,11 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
 
   /**
    * List all orchestrator-managed jobs under cwd with status.
+   */
+  /**
+   * List all launchd jobs managed under the current directory with status.
+   *
+   * @returns Array of status entries for this cwd.
    */
   async status(): Promise<RuntimeStatus[]> {
     const cwd = process.cwd();
@@ -643,6 +682,11 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
 
   /**
    * Clean all artifacts (jobs, plists, sockets) under cwd.
+   */
+  /**
+   * Remove all artifacts (jobs, plists, sockets) under the current directory.
+   *
+   * @returns A promise that resolves when cleanup completes.
    */
   async clean(): Promise<void> {
     const cwd = process.cwd();

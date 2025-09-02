@@ -8,15 +8,32 @@ import fs from 'fs/promises';
 import path from 'path';
 import { spawn } from 'child_process';
 
+/**
+ * Common CLI options for daemon management commands.
+ */
 export interface DaemonCommandOptions {
+  /** Working directory that scopes daemon identity and artifacts. */
   cwd?: string;
+  /** Environment variables to pass to the MCP server. */
   env?: Record<string, string>;
+  /** Enable debug diagnostics. */
   debug?: boolean;
+  /** Request immediate start and OSLog streaming for logs-related commands. */
   logs?: boolean;
+  /** Daemon inactivity timeout in seconds. */
   timeout?: number;
+  /** Suppress non-essential output. */
   quiet?: boolean;
 }
 
+/**
+ * Ensure (and optionally start) a daemon for the provided server command.
+ *
+ * @param command MCP server executable.
+ * @param args Arguments for the MCP server.
+ * @param options Daemon command options (cwd, env, debug, etc.).
+ * @returns A promise that resolves when ensuring is complete.
+ */
 export async function handleDaemonStart(
   command: string,
   args: string[],
@@ -60,6 +77,14 @@ export async function handleDaemonStart(
   }
 }
 
+/**
+ * Stop a specific daemon (if command/args provided) or all daemons in cwd.
+ *
+ * @param command Optional MCP server executable to compute a specific id.
+ * @param args Arguments for the MCP server.
+ * @param options Daemon command options.
+ * @returns A promise that resolves when stop actions complete.
+ */
 export async function handleDaemonStop(
   command?: string,
   args: string[] = [],
@@ -84,6 +109,11 @@ export async function handleDaemonStop(
   }
 }
 
+/**
+ * Print status for all daemons managed under the current directory.
+ *
+ * @returns A promise that resolves when output is complete.
+ */
 export async function handleDaemonStatus(): Promise<void> {
   try {
     const orchestrator: Orchestrator = await resolveOrchestrator();
@@ -109,6 +139,14 @@ export async function handleDaemonStatus(): Promise<void> {
   }
 }
 
+/**
+ * Restart a specific daemon or all daemons for the current directory.
+ *
+ * @param command Optional MCP server executable for specific daemon.
+ * @param args Arguments for the MCP server.
+ * @param options Daemon command options.
+ * @returns A promise that resolves when restart actions complete.
+ */
 export async function handleDaemonRestart(
   command?: string,
   args: string[] = [],
@@ -130,6 +168,12 @@ export async function handleDaemonRestart(
   }
 }
 
+/**
+ * Remove orchestrator artifacts (plists, sockets) and attempt to clean `.mcpli`.
+ *
+ * @param options Daemon command options with cwd and quiet controls.
+ * @returns A promise that resolves when cleanup completes.
+ */
 export async function handleDaemonClean(options: DaemonCommandOptions = {}): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
 
@@ -161,6 +205,14 @@ export async function handleDaemonClean(options: DaemonCommandOptions = {}): Pro
 
 /**
  * Stream daemon logs using OSLog filtering for specific daemon or all MCPLI daemons.
+ */
+/**
+ * Stream daemon logs from macOS unified logging (OSLog) filtered to MCPLI.
+ *
+ * @param command Optional MCP server executable to filter logs for a specific daemon.
+ * @param args Arguments for the MCP server.
+ * @param options Daemon command options.
+ * @returns A promise that resolves when the streaming ends.
  */
 export async function handleDaemonLogs(
   command?: string,
@@ -211,6 +263,11 @@ export async function handleDaemonLogs(
   });
 }
 
+/**
+ * Print help text for daemon subcommands.
+ *
+ * @returns Nothing; prints to stdout.
+ */
 export function printDaemonHelp(): void {
   console.log('MCPLI Daemon Management');
   console.log('');
