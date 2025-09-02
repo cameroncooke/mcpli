@@ -365,13 +365,14 @@ async function getRunningState(label: string): Promise<{ running: boolean; pid?:
   if (code !== 0) return { running: false };
   let running = false;
   let pid: number | undefined;
+  let stateValue: string | undefined;
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.startsWith('state =')) {
       // e.g., "state = running" or "state = waiting"
-      if (/\brunning\b/i.test(trimmed)) {
-        running = true;
-      }
+      const val = trimmed.split('=')[1]?.trim().toLowerCase();
+      stateValue = val;
+      running = /\brunning\b/i.test(trimmed);
     }
     if (trimmed.startsWith('pid =')) {
       const num = parseInt(trimmed.split('=')[1].trim(), 10);
@@ -379,6 +380,14 @@ async function getRunningState(label: string): Promise<{ running: boolean; pid?:
         pid = num;
       }
     }
+  }
+  // Some macOS versions may report state=running without a pid. Treat as not running.
+  if (running && typeof pid !== 'number') {
+    running = false;
+  }
+  // Also treat any non-"running" state as not running
+  if (stateValue && stateValue !== 'running') {
+    running = false;
   }
   return { running, pid };
 }
