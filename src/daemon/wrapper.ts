@@ -326,12 +326,22 @@ class MCPLIDaemon {
 
     if (this.debug) {
       console.log('[DAEMON] Inactivity timer reset');
+      try {
+        osLog(`[MCPLI:${this.daemonId}] Inactivity timer reset to ${this.timeoutMs}ms`);
+      } catch {
+        // ignore osLog errors
+      }
     }
 
     // Set up inactivity timeout - allow shutdown after idle period
     this.inactivityTimeout = setTimeout(() => {
       if (this.debug) {
         console.log('[DAEMON] Shutting down due to inactivity');
+        try {
+          osLog(`[MCPLI:${this.daemonId}] Shutting down due to inactivity`);
+        } catch {
+          // ignore osLog errors
+        }
       }
       this.shutdownForInactivity();
     }, this.timeoutMs);
@@ -393,8 +403,22 @@ class MCPLIDaemon {
     if (this.debug) {
       console.log('[DAEMON] Shutdown complete');
     }
-
-    process.exit(0);
+    // Attempt clean exit; add a failsafe timer in case event loop has stray handles
+    try {
+      process.exit(0);
+    } finally {
+      const t: NodeJS.Timeout = setTimeout(() => {
+        try {
+          process.exit(0);
+        } catch {
+          // ignore
+        }
+      }, 1000);
+      // Unref if available so this timer doesn't hold the loop
+      if (typeof (t as unknown as { unref?: () => void }).unref === 'function') {
+        (t as unknown as { unref: () => void }).unref();
+      }
+    }
   }
 
   handleError(error: unknown): void {

@@ -523,6 +523,10 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       MCPLI_ID_EXPECTED: id,
       // Add user's MCP server environment (from command spec after --)
       ...identityEnv,
+      // Diagnostic flags (do not affect identity)
+      ...(opts.debug ? { MCPLI_DEBUG: '1' } : {}),
+      ...(opts.verbose ? { MCPLI_VERBOSE: '1' } : {}),
+      ...(opts.quiet ? { MCPLI_QUIET: '1' } : {}),
     };
 
     // Write current diagnostic configuration to a file for the wrapper to read
