@@ -783,7 +783,7 @@ export async function sendIPCRequest(
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
 
   // Connection retry budget to smooth over launchd activation races (ms)
-  const retryBudgetDefault = 1000;
+  const retryBudgetDefault = 3000;
   const retryBudgetEnv = Number(process.env.MCPLI_IPC_CONNECT_RETRY_BUDGET_MS ?? '');
   const connectRetryBudget =
     Number.isFinite(retryBudgetEnv) && retryBudgetEnv > 0

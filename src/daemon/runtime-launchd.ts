@@ -585,6 +585,26 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     const pPath = this.plistPath(cwd, id);
     const updateAction = await writeOrUpdatePlist(pPath, plistContent, label);
 
+    // Best-effort wait for launchd to (re)create the socket path after changes
+    // to avoid brief ECONNREFUSED/ENOENT races during client connect.
+    // This is a small poll for presence; it does not connect or block long.
+    try {
+      const fsP = await import('fs/promises');
+      const deadline = Date.now() + 500; // up to 0.5s
+
+      while (true) {
+        try {
+          await fsP.stat(socketPath);
+          break;
+        } catch {
+          if (Date.now() >= deadline) break;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     // Inspect current state
     let { running, pid } = await getRunningState(label);
 
