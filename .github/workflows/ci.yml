@@ -38,4 +38,6 @@ jobs:
     - name: Run tests (macOS launchd + unit/integration/e2e)
       run: npm test
 
-    - run: npx pkg-pr-new publish
+    - name: Publish PR package (pkg-pr-new)
+      if: github.event_name == 'pull_request' && matrix.node-version == '22.x'
+      run: npx pkg-pr-new publish
