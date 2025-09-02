@@ -7,7 +7,7 @@ export default defineConfig({
     'daemon/wrapper': 'src/daemon/wrapper.ts',
   },
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
   platform: 'node',
   outDir: 'dist',
   clean: true,
