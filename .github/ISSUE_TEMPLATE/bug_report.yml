@@ -12,63 +12,47 @@ body:
     id: description
     attributes:
       label: Bug Description
-      description: A description of the bug or issue you're experiencing.
+      description: A concise description of the issue you’re experiencing.
       placeholder: When trying to run a tool via MCPLI...
     validations:
       required: true
 
-  - type: textarea
-    id: diagnostics
+  - type: input
+    id: mcpli-version
     attributes:
-      label: Diagnostic Output
-      description: Include helpful context (MCPLI/Node/OS) and command outputs.
-      placeholder: |
-        ```
-        MCPLI Diagnostics
-
-        Generated: 2025-09-02T22:30:00Z
-        Node: v22.6.0
-        Platform: macOS 15.5 (arm64)
-
-        ## Commands
-        $ mcpli --version
-        mcpli 1.0.0
-
-        $ mcpli daemon status
-        (paste output)
-
-        $ mcpli --debug <tool> -- <mcp-server-command>
-        (paste output)
-        ```
+      label: MCPLI Version
+      description: Output of `mcpli --version` or the commit SHA you’re using
+      placeholder: 1.0.0 or abcdef12
     validations:
       required: true
 
   - type: input
-    id: editor-client
+    id: node-version
     attributes:
-      label: Editor/Client
-      description: The editor or MCP client you're using
-      placeholder: Cursor 0.49.1
+      label: Node.js Version
+      placeholder: v22.6.0
     validations:
-      required: false
+      required: true
 
   - type: input
-    id: mcp-server-command
+    id: macos-version
     attributes:
-      label: MCP Server Command
-      description: The server command used after `--` (if applicable)
-      placeholder: node weather-server.js
+      label: macOS Version
+      placeholder: 15.5 (arm64)
     validations:
-      required: false
+      required: true
 
-  - type: input
-    id: mcp-server-version
+  - type: textarea
+    id: commands
     attributes:
-      label: MCP Server Version (if known)
-      description: Version of the MCP server you’re using
-      placeholder: 1.0.0
+      label: Commands Run
+      description: Paste the exact MCPLI command(s) you ran, including the MCP server command after `--`.
+      placeholder: |
+        $ mcpli get-weather --location "London" -- node weather-server.js
+        $ mcpli --debug get-weather --location "London" -- node weather-server.js
+      render: shell
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: steps
@@ -97,9 +81,31 @@ body:
       required: true
 
   - type: textarea
-    id: error
+    id: env
     attributes:
-      label: Error Messages / Logs
-      description: Any error messages or debug output
+      label: Environment Variables (if any)
+      description: List any env vars you set before running MCPLI
+      placeholder: |
+        MCPLI_DEFAULT_TIMEOUT=600
+        API_KEY=...
       render: shell
+    validations:
+      required: false
 
+  - type: textarea
+    id: daemon-status
+    attributes:
+      label: Daemon Status (optional)
+      description: Output of `mcpli daemon status`
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: debug-logs
+    attributes:
+      label: Debug Logs (optional)
+      description: Run the failing command with `--debug` and paste relevant excerpt
+      render: shell
+    validations:
+      required: false
