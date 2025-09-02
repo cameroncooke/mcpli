@@ -397,14 +397,24 @@ async function getRunningState(label: string): Promise<{ running: boolean; pid?:
  */
 async function bootstrapPlist(plistFile: string): Promise<void> {
   const domain = userLaunchdDomain();
-  const { code, stderr } = await runLaunchctl(['bootstrap', domain, plistFile]);
-  if (code !== 0) {
-    // If already loaded, print typically returns an error on bootstrap; we treat "service already loaded" as non-fatal.
-    const loaded = await isLoaded(path.basename(plistFile, '.plist'));
-    if (!loaded) {
-      throw new Error(`launchctl bootstrap failed (code ${code}): ${stderr || 'Unknown error'}`);
-    }
+  const label = path.basename(plistFile, '.plist');
+  const attempts = 3;
+  let lastErr: string | undefined;
+
+  for (let i = 0; i < attempts; i++) {
+    const { code, stderr } = await runLaunchctl(['bootstrap', domain, plistFile]);
+    if (code === 0) return;
+
+    // If it is already loaded, consider success
+    const loaded = await isLoaded(label).catch(() => false);
+    if (loaded) return;
+
+    lastErr = stderr || `code ${code}`;
+    // Small backoff before retry (handle transient launchd races)
+    await new Promise((r) => setTimeout(r, 150 * (i + 1)));
   }
+
+  throw new Error(`launchctl bootstrap failed after retries: ${lastErr ?? 'Unknown error'}`);
 }
 
 /**
@@ -422,7 +432,16 @@ async function kickstartLabel(label: string, opts: { kill?: boolean } = {}): Pro
   const domain = userLaunchdDomain();
   const args = ['kickstart'];
   if (opts.kill) args.push('-k');
-  await runLaunchctl([...args, `${domain}/${label}`]);
+
+  const attempts = 3;
+  for (let i = 0; i < attempts; i++) {
+    const res = await runLaunchctl([...args, `${domain}/${label}`]);
+    if (res.code === 0) return;
+    await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+  }
+  // Non-fatal: do not throw hard; let subsequent connection attempt activate on demand
+  // but include a diagnostic for debugging if desired
+  // throw new Error(`launchctl kickstart failed after retries (code ${last?.code}): ${last?.stderr || 'Unknown error'}`);
 }
 
 /**

@@ -469,14 +469,20 @@ cd ../../
 Test that daemons automatically shut down after timeout period.
 
 ```bash
-# Start daemon with short timeout (60 seconds)
-mcpli daemon start --timeout=60 -- node weather-server.js
+# Start daemon with short timeout (e.g., 6 seconds) and debug logging
+mcpli daemon start --debug --timeout=6 -- node weather-server.js
 
 # Check status immediately
 mcpli daemon status
 
-# Wait 70 seconds, then check status again
-sleep 70 && mcpli daemon status
+# Observe OSLog for inactivity timer reset and shutdown events (macOS only)
+mcpli daemon logs &
+LOGPID=$!
+sleep 8
+kill -INT $LOGPID
+
+# Then verify status shows the daemon is no longer running
+mcpli daemon status
 ```
 
 Expected:
