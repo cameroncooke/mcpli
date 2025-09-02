@@ -102,6 +102,24 @@ class MCPLIDaemon {
       const computedId = computeDaemonId(this.mcpCommand, this.mcpArgs, identityEnv);
       this.daemonId = computedId;
 
+      // Load diagnostic flags from file if present (avoids plist reloads on flag changes)
+      try {
+        const fs = await import('fs/promises');
+        const diagPath = `${this.cwd}/.mcpli/diagnostic-${this.daemonId}.json`;
+        const raw = await fs.readFile(diagPath, 'utf8');
+        const diag = JSON.parse(raw) as {
+          debug?: boolean;
+          logs?: boolean;
+          verbose?: boolean;
+          quiet?: boolean;
+        };
+        if (typeof diag.debug === 'boolean') this.debug = diag.debug;
+        if (typeof diag.verbose === 'boolean') this.verbose = diag.verbose;
+        if (typeof diag.quiet === 'boolean') this.quiet = diag.quiet;
+      } catch {
+        // best-effort only
+      }
+
       if (this.expectedId && this.expectedId !== computedId) {
         throw new Error(
           `Daemon ID mismatch: expected ${this.expectedId}, computed ${computedId}. Aborting.`,
