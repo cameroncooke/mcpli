@@ -1,6 +1,6 @@
 {
   "name": "mcpli",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "Transform stdio-based MCP servers into a first‑class CLI tool",
   "keywords": [
