@@ -36,10 +36,17 @@ describe('runtime identity', () => {
     expect(id1).toBe(id2);
   });
 
-  it('normalizeCommand returns absolute normalized command path', () => {
-    const rel = 'node';
-    const out = normalizeCommand(rel, ['server.js']);
-    expect(path.isAbsolute(out.command)).toBe(true);
-    expect(out.args).toEqual(['server.js']);
+  it('normalizeCommand keeps bare executables unchanged and absolutizes path-like inputs', () => {
+    // Bare executable should remain as-is
+    const bare = 'node';
+    const outBare = normalizeCommand(bare, ['server.js']);
+    expect(outBare.command).toBe('node');
+    expect(outBare.args).toEqual(['server.js']);
+
+    // Path-like command should be resolved to an absolute path
+    const pathLike = './server.js';
+    const outPath = normalizeCommand(pathLike, []);
+    expect(path.isAbsolute(outPath.command)).toBe(true);
+    expect(outPath.command.endsWith('/server.js')).toBe(true);
   });
 });
