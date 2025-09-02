@@ -1,0 +1,105 @@
+name: Bug Report
+description: Report a bug or issue with MCPLI
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue with MCPLI!
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A description of the bug or issue you're experiencing.
+      placeholder: When trying to run a tool via MCPLI...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic Output
+      description: Include helpful context (MCPLI/Node/OS) and command outputs.
+      placeholder: |
+        ```
+        MCPLI Diagnostics
+
+        Generated: 2025-09-02T22:30:00Z
+        Node: v22.6.0
+        Platform: macOS 15.5 (arm64)
+
+        ## Commands
+        $ mcpli --version
+        mcpli 1.0.0
+
+        $ mcpli daemon status
+        (paste output)
+
+        $ mcpli --debug <tool> -- <mcp-server-command>
+        (paste output)
+        ```
+    validations:
+      required: true
+
+  - type: input
+    id: editor-client
+    attributes:
+      label: Editor/Client
+      description: The editor or MCP client you're using
+      placeholder: Cursor 0.49.1
+    validations:
+      required: false
+
+  - type: input
+    id: mcp-server-command
+    attributes:
+      label: MCP Server Command
+      description: The server command used after `--` (if applicable)
+      placeholder: node weather-server.js
+    validations:
+      required: false
+
+  - type: input
+    id: mcp-server-version
+    attributes:
+      label: MCP Server Version (if known)
+      description: Version of the MCP server you’re using
+      placeholder: 1.0.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Exact command you ran
+        2. What you expected to happen
+        3. What actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error Messages / Logs
+      description: Any error messages or debug output
+      render: shell
+
