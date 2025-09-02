@@ -80,7 +80,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 ### Daemon Lifecycle
 1. **Daemon Creation**: Each unique `command + args + env` combination gets its own daemon with SHA-256 hash ID
 2. **Process Orchestration**: macOS `launchd` handles daemon supervision and socket activation
-3. **IPC Communication**: Unix domain sockets (`.mcpli/daemon-{hash}.sock`)
+3. **IPC Communication**: Unix domain sockets (under `$TMPDIR/mcpli/<cwdHash>/<daemonId>.sock`)
 4. **Automatic Cleanup**: Configurable inactivity timeout (default: 30 minutes)
 
 ### Configuration System
@@ -96,7 +96,7 @@ npx ts-node src/mcpli.ts <tool> [options] -- <server-command>
 ## Important Implementation Notes
 
 ### Environment Variable Behavior
-The `deriveIdentityEnv()` function in `src/daemon/runtime.ts` determines which environment variables affect daemon identity. Only considers environment variables explicitly provided in the server command (after `--`), ignoring the ambient shell environment to ensure stable identity across different shells and sessions.
+The `deriveIdentityEnv()` function in `src/daemon/runtime.ts` determines which environment variables affect daemon identity. It considers only variables explicitly provided in the server command (after `--`) and ignores the ambient shell environment. MCPLI_* variables are excluded from the ambient environment but are included if explicitly passed after `--`.
 
 ### Command Parsing
 The argument parsing in `src/mcpli.ts` handles the complex `-- <server-command>` syntax and environment variable extraction. Pay attention to the split between mcpli arguments and server command arguments.
