@@ -18,6 +18,7 @@ import {
   ListToolsRequestSchema, 
   CallToolRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 // Free geocoding service to convert city names to coordinates
 async function geocodeCity(cityName) {
@@ -174,11 +175,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: args } = request.params ?? { name: undefined, arguments: undefined };
+  
+  // Zod schemas for robust parameter validation
+  const GetWeatherSchema = z.object({
+    location: z.string().min(1, 'location must be a non-empty string'),
+    units: z.enum(['celsius', 'fahrenheit']).optional(),
+  });
+  const GetForecastSchema = z.object({
+    location: z.string().min(1, 'location must be a non-empty string'),
+    days: z
+      .number({ invalid_type_error: 'days must be a number' })
+      .int('days must be an integer')
+      .min(1, 'days must be between 1 and 16')
+      .max(16, 'days must be between 1 and 16')
+      .optional(),
+    units: z.enum(['celsius', 'fahrenheit']).optional(),
+  });
   
   try {
     if (name === 'get_weather') {
-      const { location, units = 'fahrenheit' } = args;
+      const parsed = GetWeatherSchema.safeParse(args ?? {});
+      if (!parsed.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Invalid arguments',
+                tool: name,
+                issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+              }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+      const { location, units = 'fahrenheit' } = parsed.data;
       
       let latitude, longitude, locationName;
       
@@ -225,7 +258,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
       
     } else if (name === 'get_forecast') {
-      const { location, days = 5, units = 'fahrenheit' } = args;
+      const parsed = GetForecastSchema.safeParse(args ?? {});
+      if (!parsed.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Invalid arguments',
+                tool: name,
+                issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+              }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+      const { location, days = 5, units = 'fahrenheit' } = parsed.data;
       
       let latitude, longitude, locationName;
       
