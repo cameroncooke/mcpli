@@ -43,7 +43,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.3",
-    "socket-activation": "^3.2.0"
+    "socket-activation": "^3.2.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.23.0",
