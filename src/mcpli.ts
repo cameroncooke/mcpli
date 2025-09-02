@@ -305,10 +305,12 @@ function findTool(userArgs: string[], tools: Tool[]): { tool: Tool; toolName: st
   // Look for tool selection - first non-option argument is the tool name
   for (const arg of userArgs) {
     if (!arg.startsWith('--') && !arg.startsWith('-')) {
-      if (toolMap.has(arg)) {
-        const tool = toolMap.get(arg);
-        if (tool) {
-          return { tool, toolName: arg };
+      const normalizedArg = normalizeToolName(arg);
+      const variants = [arg, arg.replace(/_/g, '-'), normalizedArg];
+      for (const key of variants) {
+        if (toolMap.has(key)) {
+          const tool = toolMap.get(key);
+          if (tool) return { tool, toolName: arg };
         }
       }
     }
