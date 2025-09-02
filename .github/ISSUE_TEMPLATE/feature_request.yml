@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest a new feature for MCPLI
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature for MCPLI!
+
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+      description: Describe the new capability you’d like to add to MCPLI
+      placeholder: I would like MCPLI to be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: Scenarios where this feature would be useful
+      placeholder: |
+        - Run tools in parallel with isolated daemons
+        - Improve IPC diagnostics for CI
+        - Add built-in helpers for common MCP servers
+    validations:
+      required: false
+
+  - type: textarea
+    id: example-interactions
+    attributes:
+      label: Example Commands
+      description: Provide examples of how you envision using this feature
+      placeholder: |
+        $ mcpli <tool> --option value -- <mcp-server-command>
+    validations:
+      required: false
+
