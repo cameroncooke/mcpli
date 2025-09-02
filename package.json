@@ -39,8 +39,7 @@
     "test:unit": "vitest --run tests/unit",
     "test:integration": "vitest --run tests/integration",
     "test:e2e": "vitest --run tests/e2e",
-    "coverage": "vitest run --coverage",
-    "docs": "typedoc"
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.3",
@@ -59,7 +58,6 @@
     "prettier": "^3.5.3",
     "tsup": "^8.5.0",
     "typescript": "^5.7.2",
-    "typedoc": "^0.25.13",
     "typescript-eslint": "^8.28.0",
     "vitest": "^2.0.5"
   },
