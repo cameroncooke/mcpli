@@ -145,20 +145,22 @@ export function normalizeCommand(
   args: string[] = [],
 ): { command: string; args: string[] } {
   const trimmed = String(command || '').trim();
-  const normCommand = path.isAbsolute(trimmed)
-    ? path.normalize(trimmed)
-    : path.normalize(path.resolve(trimmed));
+
+  const looksPathLike = (s: string): boolean => {
+    if (!s) return false;
+    if (path.isAbsolute(s)) return true;
+    if (s.startsWith('./') || s.startsWith('../')) return true;
+    if (s.includes('/')) return true;
+    return false;
+  };
+
+  const normCommand = looksPathLike(trimmed) ? path.normalize(path.resolve(trimmed)) : trimmed;
 
   const normArgs = (Array.isArray(args) ? args : [])
     .map((a) => String(a ?? '').trim())
     .filter((a) => a.length > 0);
 
-  const normalizedCommand =
-    process.platform === 'win32' ? normCommand.replace(/\\/g, '/').toLowerCase() : normCommand;
-  const normalizedArgs =
-    process.platform === 'win32' ? normArgs.map((a) => a.replace(/\\/g, '/')) : normArgs;
-
-  return { command: normalizedCommand, args: normalizedArgs };
+  return { command: normCommand, args: normArgs };
 }
 
 /**
