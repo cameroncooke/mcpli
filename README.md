@@ -173,11 +173,11 @@ Examples:
 # Get tool-specific help
 > mcpli get-weather --help -- node weather-server.js
 
-MCPLI Tool: get_weather
+MCPLI Tool: get-weather
 
 Description: Get current weather information for any location
 
-Usage: mcpli get_weather [options] -- <mcp-server-command> [args...]
+Usage: mcpli get-weather [options] -- <mcp-server-command> [args...]
 
 Options:
   --location             (string) [required] City name (e.g., "New York", "London, UK") or coordinates as "lat,lon"
