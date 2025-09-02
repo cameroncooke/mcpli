@@ -15,7 +15,7 @@ export default defineConfig({
     // Use forked workers for better process isolation when parallel
     pool: process.env.MCPLI_TEST_SERIAL === '1' ? 'threads' : 'forks',
     coverage: {
-      reporter: ['text', 'html'],
+      reporter: ['text', 'html', 'lcov'],
       provider: 'v8'
     }
   },

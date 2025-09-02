@@ -32,11 +32,26 @@ jobs:
     - name: Lint
       run: npm run lint
 
+    - name: Format check
+      run: npm run format:check
+
     - name: Type check
       run: npm run typecheck
 
     - name: Run tests (macOS launchd + unit/integration/e2e)
       run: npm test
+
+    - name: Coverage report
+      if: matrix.node-version == '22.x'
+      run: npm run coverage
+
+    - name: Upload coverage to Codecov
+      if: matrix.node-version == '22.x'
+      uses: codecov/codecov-action@v3
+      with:
+        files: coverage/lcov.info
+        fail_ci_if_error: false
+        verbose: true
 
     - name: Publish PR package (pkg-pr-new)
       if: github.event_name == 'pull_request' && matrix.node-version == '22.x'
