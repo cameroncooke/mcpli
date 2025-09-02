@@ -75,8 +75,40 @@ class MCPLIDaemon {
     const timeoutNum = Number(timeoutRaw);
     this.timeoutMs = Number.isFinite(timeoutNum) && timeoutNum > 0 ? timeoutNum : 30 * 60 * 1000;
     this.mcpCommand = process.env.MCPLI_COMMAND ?? '';
-    this.mcpArgs = JSON.parse(process.env.MCPLI_ARGS ?? '[]') as string[];
-    this.serverEnv = JSON.parse(process.env.MCPLI_SERVER_ENV ?? '{}') as Record<string, string>;
+    // Parse MCPLI_ARGS safely -> array of strings
+    try {
+      const rawArgs = process.env.MCPLI_ARGS ?? '[]';
+      const parsed: unknown = JSON.parse(rawArgs);
+      if (Array.isArray(parsed) && (parsed as unknown[]).every((v) => typeof v === 'string')) {
+        this.mcpArgs = parsed as string[];
+      } else {
+        console.warn('[DAEMON] Ignoring malformed MCPLI_ARGS; defaulting to []');
+        this.mcpArgs = [];
+      }
+    } catch {
+      console.warn('[DAEMON] Failed to parse MCPLI_ARGS; defaulting to []');
+      this.mcpArgs = [];
+    }
+
+    // Parse MCPLI_SERVER_ENV safely -> record of strings
+    try {
+      const rawEnv = process.env.MCPLI_SERVER_ENV ?? '{}';
+      const parsedEnv: unknown = JSON.parse(rawEnv);
+      if (
+        parsedEnv &&
+        typeof parsedEnv === 'object' &&
+        !Array.isArray(parsedEnv) &&
+        Object.values(parsedEnv as Record<string, unknown>).every((v) => typeof v === 'string')
+      ) {
+        this.serverEnv = parsedEnv as Record<string, string>;
+      } else {
+        console.warn('[DAEMON] Ignoring malformed MCPLI_SERVER_ENV; defaulting to {}');
+        this.serverEnv = {};
+      }
+    } catch {
+      console.warn('[DAEMON] Failed to parse MCPLI_SERVER_ENV; defaulting to {}');
+      this.serverEnv = {};
+    }
     this.expectedId = process.env.MCPLI_ID_EXPECTED ?? undefined;
     this.orchestrator = process.env.MCPLI_ORCHESTRATOR ?? 'standalone';
     this.socketPath = process.env.MCPLI_SOCKET_PATH ?? undefined; // diagnostic only
@@ -315,10 +347,26 @@ class MCPLIDaemon {
           result = await this.mcpClient.listTools();
           break;
 
-        case 'callTool':
+        case 'callTool': {
           if (!this.mcpClient) throw new Error('MCP client not connected');
-          result = await this.mcpClient.callTool(request.params!);
+          const p = request.params as unknown;
+          if (!p || typeof p !== 'object') {
+            throw new Error('Invalid callTool params: expected object');
+          }
+          const name = (p as { name?: unknown }).name;
+          const args = (p as { arguments?: unknown }).arguments;
+          if (typeof name !== 'string' || name.trim() === '') {
+            throw new Error('Invalid callTool params: "name" must be a non-empty string');
+          }
+          if (args !== undefined && (typeof args !== 'object' || Array.isArray(args))) {
+            throw new Error('Invalid callTool params: "arguments" must be an object when provided');
+          }
+          result = await this.mcpClient.callTool({
+            name,
+            arguments: args as Record<string, unknown> | undefined,
+          });
           break;
+        }
 
         default:
           throw new Error(`Unknown method: ${request.method}`);
