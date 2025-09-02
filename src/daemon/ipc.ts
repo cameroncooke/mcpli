@@ -782,93 +782,140 @@ export async function sendIPCRequest(
 ): Promise<unknown> {
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
 
-  return new Promise((resolve, reject) => {
-    const client = net.connect(socketPath, () => {
-      client.write(JSON.stringify(request) + '\n');
-    });
+  // Connection retry budget to smooth over launchd activation races (ms)
+  const retryBudgetDefault = 1000;
+  const retryBudgetEnv = Number(process.env.MCPLI_IPC_CONNECT_RETRY_BUDGET_MS ?? '');
+  const connectRetryBudget =
+    Number.isFinite(retryBudgetEnv) && retryBudgetEnv > 0
+      ? Math.min(retryBudgetEnv, Math.max(250, retryBudgetEnv))
+      : retryBudgetDefault;
 
-    let buffer = '';
-    const timeout = setTimeout(() => {
-      try {
-        client.destroy();
-      } catch {
-        // ignore
-      }
-      reject(new Error(`IPC request timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
+  function connectWithRetry(path: string, budgetMs: number): Promise<net.Socket> {
+    const deadline = Date.now() + budgetMs;
+    const attempt = (delayMs: number): Promise<net.Socket> =>
+      new Promise((resolveAttempt, rejectAttempt) => {
+        const socket = net.connect(path);
+        let settled = false;
 
-    client.on('data', (data) => {
-      buffer += data.toString();
-
-      const currentBytes = Buffer.byteLength(buffer, 'utf8');
-
-      if (currentBytes > killThresholdBytes) {
-        clearTimeout(timeout);
-        try {
-          client.destroy();
-        } catch {
-          // ignore
-        }
-        buffer = '';
-        reject(
-          new Error(
-            `[F-014] IPC response exceeded hard threshold ${formatBytes(
-              killThresholdBytes,
-            )}. Aborting to prevent runaway memory.`,
-          ),
-        );
-        return;
-      }
-
-      if (currentBytes > maxFrameBytes) {
-        clearTimeout(timeout);
-        try {
-          client.destroy();
-        } catch {
-          // ignore
-        }
-        buffer = '';
-        reject(new Error(makeOversizeResponseError(currentBytes, maxFrameBytes)));
-        return;
-      }
-
-      const newlineIndex = buffer.indexOf('\n');
-      if (newlineIndex !== -1) {
-        const message = buffer.slice(0, newlineIndex);
-        clearTimeout(timeout);
-        try {
-          client.end();
-        } catch {
-          // ignore
-        }
-
-        try {
-          const response: IPCResponse = JSON.parse(message) as IPCResponse;
-          if (response.error) {
-            reject(new Error(response.error));
-          } else {
-            resolve(response.result!);
+        const onConnect = (): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolveAttempt(socket);
+        };
+        const onError = (err: NodeJS.ErrnoException): void => {
+          if (settled) return;
+          // Retry only for transient launchd/socket activation cases
+          if (err && (err.code === 'ECONNREFUSED' || err.code === 'ENOENT')) {
+            cleanup();
+            const now = Date.now();
+            if (now >= deadline) {
+              rejectAttempt(err);
+              return;
+            }
+            const nextDelay = Math.min(100, Math.max(20, delayMs));
+            setTimeout(() => {
+              attempt(nextDelay).then(resolveAttempt, rejectAttempt);
+            }, nextDelay);
+            return;
           }
-        } catch (error) {
-          reject(new Error(`Invalid IPC response: ${error}`));
+          cleanup();
+          rejectAttempt(err);
+        };
+        const cleanup = (): void => {
+          socket.removeListener('connect', onConnect);
+          socket.removeListener('error', onError);
+        };
+
+        socket.once('connect', onConnect);
+        socket.once('error', onError);
+      });
+
+    return attempt(20);
+  }
+
+  return new Promise((resolve, reject) => {
+    let client: net.Socket;
+    // Establish connection (with short retry budget)
+    connectWithRetry(
+      socketPath,
+      Math.min(connectRetryBudget, Math.max(100, Math.floor(timeoutMs / 4))),
+    )
+      .then((sock) => {
+        client = sock;
+        client.write(JSON.stringify(request) + '\n');
+        attachHandlers(client);
+      })
+      .catch((err) => reject(err));
+
+    function attachHandlers(clientSock: net.Socket): void {
+      let buffer = '';
+      const timeout = setTimeout(() => {
+        try {
+          clientSock.destroy();
+        } catch {
+          // ignore
         }
-      }
-    });
+        reject(new Error(`IPC request timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
 
-    client.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
+      clientSock.on('data', (data) => {
+        buffer += data.toString();
 
-    client.on('timeout', () => {
-      clearTimeout(timeout);
-      try {
-        client.destroy();
-      } catch {
-        // ignore
-      }
-      reject(new Error('IPC connection timeout'));
-    });
+        const currentBytes = Buffer.byteLength(buffer, 'utf8');
+
+        if (currentBytes > killThresholdBytes) {
+          clearTimeout(timeout);
+          try {
+            clientSock.destroy();
+          } catch {
+            // ignore
+          }
+          buffer = '';
+          reject(
+            new Error(
+              `[F-014] IPC response exceeded hard threshold ${formatBytes(
+                killThresholdBytes,
+              )}. Aborting to prevent runaway memory.`,
+            ),
+          );
+          return;
+        }
+
+        if (currentBytes > maxFrameBytes) {
+          clearTimeout(timeout);
+          try {
+            clientSock.destroy();
+          } catch {
+            // ignore
+          }
+          buffer = '';
+          reject(new Error(makeOversizeResponseError(currentBytes, maxFrameBytes)));
+          return;
+        }
+
+        const newlineIndex = buffer.indexOf('\n');
+        if (newlineIndex !== -1) {
+          const message = buffer.slice(0, newlineIndex);
+          clearTimeout(timeout);
+          try {
+            clientSock.end();
+          } catch {
+            // ignore
+          }
+          try {
+            const response: IPCResponse = JSON.parse(message) as IPCResponse;
+            if (response.error) {
+              reject(new Error(response.error));
+            } else {
+              resolve(response.result!);
+            }
+          } catch (error) {
+            reject(new Error(`Invalid IPC response: ${error}`));
+          }
+        }
+      });
+    }
   });
 }
 
