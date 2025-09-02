@@ -355,4 +355,4 @@ Whether you're fixing bugs, adding features, improving documentation, or enhanci
 
 ## License
 
-MIT
+[MIT](LICENSE)
