@@ -32,6 +32,11 @@ function validateSocketName(name: string): string {
   return key;
 }
 
+/**
+ * Long-lived daemon process that hosts an MCP client and exposes a local
+ * IPC interface for mcpli commands. Designed to be launched by launchd
+ * with socket activation.
+ */
 class MCPLIDaemon {
   private mcpClient: Client | null = null;
   private ipcServer: IPCServer | null = null;
@@ -84,6 +89,12 @@ class MCPLIDaemon {
     }
   }
 
+  /**
+   * Entry point: start MCP client, then start IPC server, attach signal/error
+   * handlers, and manage lifecycle including inactivity shutdown.
+   *
+   * @returns A promise that resolves once startup completes, or rejects on failure.
+   */
   async start(): Promise<void> {
     try {
       // Compute canonical identity and validate if provided

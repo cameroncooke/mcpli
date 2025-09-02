@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * MCPLI - Turn any MCP server into a first-class CLI tool
+ * MCPLI - Turn any MCP server into a first-class CLI tool.
  *
- * This version uses long-lived daemon processes for all tool execution.
+ * CLI entrypoint: parses arguments, ensures a per-command daemon via the
+ * orchestrator, and forwards tool invocations over secure local IPC.
  */
 
 import { DaemonClient } from './daemon/index.ts';
@@ -22,13 +23,23 @@ import { isUnsafeKey, safeEmptyRecord, safeDefine, deepSanitize } from './utils/
 import path from 'path';
 import { spawn } from 'child_process';
 
+/**
+ * Global CLI flags that shape daemon behavior and output.
+ */
 interface GlobalOptions {
+  /** Show help text instead of executing. */
   help?: boolean;
+  /** Suppress non-essential output. */
   quiet?: boolean;
+  /** Print raw MCP response JSON. */
   raw?: boolean;
+  /** Enable debug diagnostics. */
   debug?: boolean;
+  /** Show live daemon logs when executing. */
   verbose?: boolean;
+  /** Inactivity timeout (seconds) for daemon. */
   timeout?: number;
+  /** Internal: daemon subcommand mode. */
   daemon?: boolean;
 }
 
@@ -37,11 +48,20 @@ interface GlobalOptions {
 // -----------------------------------------------------------------------------
 
 type CommandSpec = {
+  /** Environment variables passed to the MCP server process. */
   env: Record<string, string>;
+  /** Executable to run for the MCP server. */
   command: string;
+  /** Arguments to pass to the MCP server. */
   args: string[];
 };
 
+/**
+ * Parse KEY=VALUE pairs and a command following `--` into a CommandSpec.
+ *
+ * @param tokens CLI tokens after `--` containing env, command and args.
+ * @returns A parsed command, args, and env spec.
+ */
 function parseCommandSpec(tokens: string[]): CommandSpec {
   const env = safeEmptyRecord<string>();
   let i = 0;
@@ -72,6 +92,13 @@ function parseCommandSpec(tokens: string[]): CommandSpec {
   return { env, command, args };
 }
 
+/**
+ * Parse CLI argv into global flags, user tool args, and CommandSpec fields
+ * (child command/args/env) when present after `--`.
+ *
+ * @param argv Full process argv array.
+ * @returns Parsed globals, child command/args/env, user args and daemon subcommand fields.
+ */
 function parseArgs(argv: string[]): {
   globals: GlobalOptions;
   childCommand: string;
@@ -208,6 +235,16 @@ function parseArgs(argv: string[]): {
 // -----------------------------------------------------------------------------
 // Env-aware tool discovery (daemon mode)
 // -----------------------------------------------------------------------------
+/**
+ * Ensure/connect to daemon and fetch tools, returning the client and a
+ * no-op close function for symmetry.
+ *
+ * @param command MCP server executable.
+ * @param args Arguments for the MCP server.
+ * @param env Environment for the MCP server.
+ * @param options Global options relevant to discovery.
+ * @returns Tools available and a connected client handle.
+ */
 async function discoverToolsEx(
   command: string,
   args: string[],
@@ -237,10 +274,23 @@ async function discoverToolsEx(
   };
 }
 
+/**
+ * Normalize tool name for matching (lowercase alnum only).
+ *
+ * @param name Tool name to normalize.
+ * @returns Normalized token for matching.
+ */
 function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * Identify the selected tool from the first non-option argument.
+ *
+ * @param userArgs CLI arguments entered by the user.
+ * @param tools Tools discovered from the daemon.
+ * @returns The matched tool and the token used, or null if none.
+ */
 function findTool(userArgs: string[], tools: Tool[]): { tool: Tool; toolName: string } | null {
   const toolMap = new Map<string, Tool>();
 
@@ -267,6 +317,15 @@ function findTool(userArgs: string[], tools: Tool[]): { tool: Tool; toolName: st
   return null;
 }
 
+/**
+ * Parse user-provided tool parameters according to the tool's input schema,
+ * coercing types and sanitizing JSON where applicable.
+ *
+ * @param userArgs CLI arguments including tool options.
+ * @param selectedTool The tool definition with input schema.
+ * @param toolName The user-entered tool token used to find parameters.
+ * @returns A parameter object ready to send to the daemon.
+ */
 function parseParams(
   userArgs: string[],
   selectedTool: Tool,
@@ -424,6 +483,12 @@ function parseParams(
   return params;
 }
 
+/**
+ * Extract a convenient payload from an MCP ToolCallResult for CLI printing.
+ *
+ * @param result The raw ToolCallResult from the daemon.
+ * @returns A primitive or object suitable for printing.
+ */
 function extractContent(result: ToolCallResult): unknown {
   if (!result.content || result.content.length === 0) {
     return null;
@@ -453,6 +518,12 @@ function extractContent(result: ToolCallResult): unknown {
   });
 }
 
+/**
+ * Build a printable command string from a CommandSpec-like shape for help/UX.
+ *
+ * @param actualCommand Command, args, and env to display.
+ * @returns A CLI string for documentation.
+ */
 function buildCommandString(actualCommand?: {
   command?: string;
   args?: string[];
@@ -473,10 +544,26 @@ function buildCommandString(actualCommand?: {
   return `${envStr}${actualCommand.command}${argsStr}`;
 }
 
+/**
+ * Tail the daemon log file live when `--verbose` is set. Non-fatal on errors.
+ *
+ * @param cwd The working directory where `.mcpli/daemon.log` lives.
+ * @returns An object with `stop()` to end log following.
+ */
 function spawnLiveLogFollower(cwd: string): { stop: () => void } {
   const logPath = path.join(cwd, '.mcpli', 'daemon.log');
-  const proc = spawn('tail', ['-n', '0', '-F', logPath], {
+  // Use absolute path to tail for safety and predictability (no PATH lookup)
+  const proc = spawn('/usr/bin/tail', ['-n', '0', '-F', logPath], {
     stdio: ['ignore', 'inherit', 'inherit'],
+  });
+
+  proc.on('error', (err) => {
+    // Non-fatal: continue without live log tailing
+    console.error(
+      `[WARN] Failed to start live log follower: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   });
 
   let stopped = false;
@@ -514,6 +601,13 @@ function spawnLiveLogFollower(cwd: string): { stop: () => void } {
   return { stop };
 }
 
+/**
+ * Print detailed help for a specific tool based on its inputSchema.
+ *
+ * @param tool The tool to document.
+ * @param actualCommand Optional command context for example strings.
+ * @returns Nothing; prints to stdout.
+ */
 function printToolHelp(
   tool: Tool,
   actualCommand?: { command?: string; args?: string[]; env?: Record<string, string> },
@@ -566,6 +660,14 @@ function printToolHelp(
   }
 }
 
+/**
+ * Print top-level CLI help, including discovered tools and daemon commands.
+ *
+ * @param tools Tools discovered from the daemon.
+ * @param specificTool Optional tool for detailed help when provided.
+ * @param actualCommand Optional command context for example strings.
+ * @returns Nothing; prints to stdout.
+ */
 function printHelp(
   tools: Tool[],
   specificTool?: Tool,
@@ -636,6 +738,11 @@ function printHelp(
   }
 }
 
+/**
+ * CLI main: parse args, ensure daemon, execute tool, and render output.
+ *
+ * @returns A promise that resolves when the CLI run completes.
+ */
 async function main(): Promise<void> {
   try {
     const result = parseArgs(process.argv);

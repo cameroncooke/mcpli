@@ -9,9 +9,11 @@ export default defineConfig({
     testTimeout: 60000,
     hookTimeout: 60000,
     reporters: 'default',
-    // Run tests sequentially to avoid daemon conflicts
-    threads: false,
-    fileParallelism: false,
+    // Allow parallelism by default; can be disabled with MCPLI_TEST_SERIAL=1
+    threads: process.env.MCPLI_TEST_SERIAL === '1' ? false : true,
+    fileParallelism: process.env.MCPLI_TEST_SERIAL === '1' ? false : true,
+    // Use forked workers for better process isolation when parallel
+    pool: process.env.MCPLI_TEST_SERIAL === '1' ? 'threads' : 'forks',
     coverage: {
       reporter: ['text', 'html'],
       provider: 'v8'
