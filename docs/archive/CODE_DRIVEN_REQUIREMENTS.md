@@ -145,7 +145,7 @@ Organised by feature/capability. Each item links to evidence.
 - **Data Lifecycle:** 
   - Collection: CLI arguments and environment variables
   - Processing: Parsing, validation, and type conversion
-  - Storage: Temporary in daemon lock files and socket files
+  - Storage: Temporary in launchd metadata and Unix domain socket files
   - Retention/erasure: Automatic cleanup on daemon shutdown
 - **PII/Secrets Handling:** 
   - Input sanitisation prevents prototype pollution attacks [E-030]
@@ -161,7 +161,6 @@ Organised by feature/capability. Each item links to evidence.
 - **Libraries/SDKs of note:** 
   - @modelcontextprotocol/sdk: Core MCP protocol implementation [E-035]
   - socket-activation: macOS socket FD discovery with fallback [E-036]
-  - proper-lockfile: Daemon state management and file locking [E-037]
 
 ## 7. Configuration & Environments
 - **Env Vars & Config Files:** 

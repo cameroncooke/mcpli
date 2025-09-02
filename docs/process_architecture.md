@@ -728,11 +728,10 @@ graph TD
 ```
 
 The normalization process handles several important cases:
-- **Path Resolution**: Converts relative paths to absolute paths for consistency
-- **Cross-Platform Compatibility**: Normalizes path separators and case sensitivity
+- **Path Resolution**: Converts path-like command inputs to absolute paths; bare executables remain unchanged
 - **Environment Ordering**: Ensures deterministic hash generation regardless of variable order
-- **Empty Value Handling**: Filters out undefined or empty environment variables
-- **Environment scope**: Only environment variables explicitly supplied as part of the MCP server command (after `--`) are considered for identity hashing. CLI process environment and MCPLI_* variables are excluded.
+- **Empty Value Handling**: Includes empty-string environment values if explicitly provided
+- **Environment scope**: Only environment variables explicitly supplied as part of the MCP server command (after `--`) are considered for identity hashing. Ambient shell env is ignored. MCPLI_* variables are included only if passed after `--`.
 
 ## Error Handling and Recovery
 
