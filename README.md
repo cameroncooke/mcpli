@@ -1,5 +1,12 @@
 ![MCPLI Logo](banner.png)
 
+[![CI](https://github.com/cameroncooke/mcpli/actions/workflows/ci.yml/badge.svg)](https://github.com/cameroncooke/mcpli/actions/workflows/ci.yml)
+[![npm version](https://badge.fury.io/js/mcpli.svg)](https://badge.fury.io/js/mcpli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
+[![pkg.pr.new](https://pkg.pr.new/badge/cameroncooke/mcpli)](https://pkg.pr.new/~/cameroncooke/mcpli)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cameroncooke/mcpli)
+
 # MCPLI
 
 Transform stdio-based MCP servers into a first‑class CLI tool.
@@ -352,6 +359,10 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - Code quality standards and testing guidelines
 
 Whether you're fixing bugs, adding features, improving documentation, or enhancing performance, your contributions help make MCPLI better for everyone.
+
+## Security
+
+For a high‑level overview of MCPLI’s security posture, see the [Security Overview](security.md).
 
 ## License
 
