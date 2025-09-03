@@ -34,6 +34,7 @@ MCPLI turns any stdio-based MCP server into a discoverable, script‑friendly, a
   - [Debugging](#debugging)
 - [Tool Parameter Syntax](#tool-parameter-syntax)
 - [Contributing](#contributing)
+- [Security](#security)
 - [License](#license)
 
 ## Quick Start
