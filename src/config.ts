@@ -40,7 +40,7 @@ export const ENV_VARS = {
 const DEFAULT_CONFIG: MCPLIConfig = {
   defaultTimeoutSeconds: 1800, // 30 minutes
   defaultCliTimeoutSeconds: 30, // 30 seconds
-  defaultIpcTimeoutMs: 10000, // 10 seconds
+  defaultIpcTimeoutMs: 30000, // 30 seconds
 };
 
 /**

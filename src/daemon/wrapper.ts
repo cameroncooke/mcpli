@@ -197,6 +197,15 @@ class MCPLIDaemon {
       }
     } catch (error) {
       console.error('[DAEMON] Failed to start:', error);
+      try {
+        osLog(
+          `[MCPLI:${this.daemonId ?? 'unknown'}] Daemon failed to start: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } catch {
+        // ignore logging errors
+      }
       process.exit(1);
     }
   }

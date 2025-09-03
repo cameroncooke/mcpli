@@ -551,6 +551,9 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       MCPLI_ID_EXPECTED: id,
       // Add user's MCP server environment (from command spec after --)
       ...identityEnv,
+      // Preserve the user's PATH so child commands like `npx` can be resolved under launchd
+      // This does not affect identity hashing since only explicit server env is used there.
+      PATH: process.env.PATH ?? '',
     };
 
     // Write current diagnostic configuration to a file for the wrapper to read

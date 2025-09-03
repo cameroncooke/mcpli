@@ -11,6 +11,7 @@ import {
   deriveIdentityEnv,
   Orchestrator,
 } from './runtime.ts';
+import { getConfig } from '../config.ts';
 
 /**
  * Options for interacting with the MCPLI daemon through the orchestrator.
@@ -33,6 +34,8 @@ export interface DaemonClientOptions {
   verbose?: boolean;
   /** Inactivity timeout (seconds) for the daemon. */
   timeout?: number;
+  /** IPC request timeout in milliseconds (overrides config default). */
+  ipcTimeoutMs?: number;
 }
 
 /**
@@ -44,6 +47,7 @@ export interface DaemonClientOptions {
 export class DaemonClient {
   private daemonId?: string;
   private orchestratorPromise: Promise<Orchestrator>;
+  private ipcTimeoutMs: number;
 
   /**
    * Construct a client for a given MCP server command.
@@ -60,6 +64,13 @@ export class DaemonClient {
     this.options = {
       ...options,
     };
+
+    // Configure IPC timeout from options or global config
+    const cfg = getConfig();
+    this.ipcTimeoutMs = Math.max(
+      1000,
+      Math.trunc(this.options.ipcTimeoutMs ?? cfg.defaultIpcTimeoutMs),
+    );
 
     // Resolve orchestrator (launchd-only architecture)
     this.orchestratorPromise = resolveOrchestrator();
@@ -132,7 +143,7 @@ export class DaemonClient {
     if (this.options.debug) {
       console.time('[DEBUG] IPC request');
     }
-    const result = await sendIPCRequest(ensureRes.socketPath, request);
+    const result = await sendIPCRequest(ensureRes.socketPath, request, this.ipcTimeoutMs);
     if (this.options.debug) {
       console.timeEnd('[DEBUG] IPC request');
     }
