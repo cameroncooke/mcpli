@@ -332,7 +332,7 @@ mcpli get-weather --timeout=1200 --location "NYC" -- node weather-server.js
 Available environment variables:
 - **`MCPLI_DEFAULT_TIMEOUT`**: Default daemon inactivity timeout in seconds (default: 1800)
 - **`MCPLI_CLI_TIMEOUT`**: Default CLI operation timeout in seconds (default: 30)
-- **`MCPLI_IPC_TIMEOUT`**: Default IPC connection timeout in milliseconds (default: 10000)
+- **`MCPLI_IPC_TIMEOUT`**: Default IPC connection timeout in milliseconds (default: 300000)
  - **`MCPLI_TIMEOUT`**: Internal daemon wrapper timeout in milliseconds; derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000). Typically not set directly.
 
 ### Debugging

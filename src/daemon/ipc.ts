@@ -856,7 +856,11 @@ export async function sendIPCRequest(
         } catch {
           // ignore
         }
-        reject(new Error(`IPC request timeout after ${timeoutMs}ms`));
+        reject(
+          new Error(
+            `IPC request timeout after ${timeoutMs}ms. Increase this by setting the MCPLI_IPC_TIMEOUT environment variable (milliseconds).`,
+          ),
+        );
       }, timeoutMs);
 
       clientSock.on('data', (data) => {
