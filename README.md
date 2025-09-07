@@ -170,6 +170,7 @@ Daemon Commands:
   daemon status  Show daemon status
   daemon restart Restart daemon process
   daemon logs    Show daemon logs
+  daemon log     Show recent daemon logs (non-interactive)
   daemon clean   Clean up daemon files
 
 Examples:
@@ -250,8 +251,13 @@ mcpli daemon stop
 mcpli daemon restart -- node weather-server.js
 mcpli daemon restart
 
-# View logs (works with --logs or --verbose)
+# View logs (live stream)
 mcpli daemon logs
+
+# Show recent logs (non-interactive; default 2 minutes)
+mcpli daemon log --since=2m
+# Filter to specific daemon by passing the server command after --
+mcpli daemon log --since=2m -- node weather-server.js
 
 # Clean up files and stale sockets
 mcpli daemon clean
@@ -367,8 +373,10 @@ Deprecated/unused:
 
 ### Debugging
 
-- Add `--debug` for detailed diagnostics
-- Add `--verbose` to show MCP server stderr/logs when convenient
+- `--debug` enables MCPLI diagnostics (structured, concise)
+- `--verbose` shows MCP server stderr/logs
+- `mcpli daemon log [--since=2m] [-- <server>]` prints recent logs without streaming
+  - Default window can be configured via `MCPLI_LOG_SINCE` (e.g., `export MCPLI_LOG_SINCE=10m`)
 
 ## Tool Parameter Syntax
 
