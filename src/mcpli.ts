@@ -39,6 +39,8 @@ interface GlobalOptions {
   verbose?: boolean;
   /** Inactivity timeout (seconds) for daemon. */
   timeout?: number;
+  /** Default tool execution timeout (seconds). */
+  toolTimeoutSeconds?: number;
   /** Internal: daemon subcommand mode. */
   daemon?: boolean;
 }
@@ -143,6 +145,8 @@ function parseArgs(argv: string[]): {
       else if (arg === '--verbose') globals.verbose = true;
       else if (arg.startsWith('--timeout=')) {
         globals.timeout = parseInt(arg.split('=')[1], 10);
+      } else if (arg.startsWith('--tool-timeout=')) {
+        globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
       }
     }
 
@@ -226,6 +230,8 @@ function parseArgs(argv: string[]): {
     else if (arg === '--verbose') globals.verbose = true;
     else if (arg.startsWith('--timeout=')) {
       globals.timeout = parseInt(arg.split('=')[1], 10);
+    } else if (arg.startsWith('--tool-timeout=')) {
+      globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
     }
   }
 
@@ -263,6 +269,10 @@ async function discoverToolsEx(
     verbose: options.verbose,
     debug: options.debug,
     timeout: options.timeout, // Pass timeout in seconds, let DaemonClient handle conversion
+    toolTimeoutMs:
+      typeof options.toolTimeoutSeconds === 'number' && !isNaN(options.toolTimeoutSeconds)
+        ? Math.max(1, Math.trunc(options.toolTimeoutSeconds)) * 1000
+        : undefined,
     env,
   });
 
@@ -690,7 +700,7 @@ function printHelp(
   console.log('');
   console.log('Global Options:');
   console.log('  --help, -h     Show this help and list all available tools');
-  console.log('  --verbose      Show daemon logs during execution');
+  console.log('  --verbose      Show MCP server output (stderr/logs)');
   console.log('  --raw          Print raw MCP response');
   console.log('  --debug        Enable debug output');
 
@@ -698,6 +708,14 @@ function printHelp(
   console.log(
     `  --timeout=<seconds> Set daemon inactivity timeout (default: ${config.defaultTimeoutSeconds})`,
   );
+  // Tool execution timeout (front-facing). Show seconds for consistency with --timeout
+  const defaultToolSecs = Math.trunc(config.defaultToolTimeoutMs / 1000);
+  console.log(
+    `  --tool-timeout=<seconds> Set tool execution timeout (default: ${defaultToolSecs})`,
+  );
+  console.log('');
+  console.log('Related env vars:');
+  console.log('  MCPLI_IPC_TIMEOUT (ms), MCPLI_TOOL_TIMEOUT_MS (ms)');
   console.log('');
 
   if (tools.length > 0) {
@@ -770,6 +788,10 @@ async function main(): Promise<void> {
         debug: globals.debug,
         timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
         quiet: globals.quiet,
+        toolTimeoutMs:
+          typeof globals.toolTimeoutSeconds === 'number' && !isNaN(globals.toolTimeoutSeconds)
+            ? Math.max(1000, Math.trunc(globals.toolTimeoutSeconds) * 1000)
+            : undefined,
       };
 
       switch (daemonCommand) {

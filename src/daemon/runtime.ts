@@ -41,6 +41,8 @@ export interface EnsureOptions {
   timeout?: number;
   /** Daemon inactivity timeout in milliseconds (overrides `timeout` if set). */
   timeoutMs?: number;
+  /** Default MCP tool timeout (ms) to pass to wrapper; does not affect identity. */
+  toolTimeoutMs?: number;
   /**
    * Hint to start the service immediately rather than lazily on first connection (if supported).
    */

@@ -779,16 +779,24 @@ export async function sendIPCRequest(
   socketPath: string,
   request: IPCRequest,
   timeoutMs = 10000,
+  connectRetryBudgetMs?: number,
 ): Promise<unknown> {
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
 
   // Connection retry budget to smooth over launchd activation races (ms)
   const retryBudgetDefault = 3000;
   const retryBudgetEnv = Number(process.env.MCPLI_IPC_CONNECT_RETRY_BUDGET_MS ?? '');
-  const connectRetryBudget =
-    Number.isFinite(retryBudgetEnv) && retryBudgetEnv > 0
-      ? Math.min(retryBudgetEnv, Math.max(250, retryBudgetEnv))
-      : retryBudgetDefault;
+  const connectRetryBudget = (() => {
+    // Priority: explicit override > env var > default
+    if (Number.isFinite(connectRetryBudgetMs) && (connectRetryBudgetMs as number) > 0) {
+      return Math.floor(connectRetryBudgetMs as number);
+    }
+    if (Number.isFinite(retryBudgetEnv) && retryBudgetEnv > 0) {
+      // Clamp to a sane minimum of 250ms
+      return Math.max(250, Math.floor(retryBudgetEnv));
+    }
+    return retryBudgetDefault;
+  })();
 
   function connectWithRetry(path: string, budgetMs: number): Promise<net.Socket> {
     const deadline = Date.now() + budgetMs;
