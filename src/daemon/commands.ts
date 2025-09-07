@@ -271,6 +271,48 @@ export async function handleDaemonLogs(
 }
 
 /**
+ * Show recent daemon logs (non-interactive) using macOS unified logging.
+ * Optional command/args may filter to a specific daemon by identity.
+ * @param since e.g., '20s', '5m', '1h' (default '5m')
+ */
+export async function handleDaemonLogShow(
+  command?: string,
+  args: string[] = [],
+  options: DaemonCommandOptions = {},
+  since: string = '5m',
+): Promise<void> {
+  if (process.platform !== 'darwin') {
+    console.error('Daemon logs are only available on macOS.');
+    process.exit(1);
+  }
+
+  let predicate: string;
+  if (command?.trim()) {
+    const identityEnv = deriveIdentityEnv(options.env ?? {});
+    const id = computeDaemonId(command, args, identityEnv);
+    predicate = `eventMessage CONTAINS "[MCPLI:${id}]"`;
+  } else {
+    predicate = `eventMessage CONTAINS "[MCPLI:"`;
+  }
+
+  const proc = spawn(
+    '/usr/bin/log',
+    ['show', '--style', 'compact', '--last', since, '--predicate', predicate],
+    {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    },
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    proc.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`log show exited with code ${code}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
+/**
  * Print help text for daemon subcommands.
  *
  * @returns Nothing; prints to stdout.
@@ -287,6 +329,7 @@ export function printDaemonHelp(): void {
   console.log('  restart [-- command args...]     Restart specific daemon or all daemons');
   console.log('  status                           Show all running daemons');
   console.log('  logs                             Show daemon log output');
+  console.log('  log [--since=5m]                 Show recent daemon logs (non-interactive)');
   console.log('  clean                            Clean up all daemon files');
   console.log('');
   console.log('Options:');

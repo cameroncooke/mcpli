@@ -39,6 +39,8 @@ interface GlobalOptions {
   verbose?: boolean;
   /** Inactivity timeout (seconds) for daemon. */
   timeout?: number;
+  /** True if timeout was explicitly provided on CLI. */
+  timeoutExplicit?: boolean;
   /** Default tool execution timeout (seconds). */
   toolTimeoutSeconds?: number;
   /** Internal: daemon subcommand mode. */
@@ -145,6 +147,7 @@ function parseArgs(argv: string[]): {
       else if (arg === '--verbose') globals.verbose = true;
       else if (arg.startsWith('--timeout=')) {
         globals.timeout = parseInt(arg.split('=')[1], 10);
+        globals.timeoutExplicit = true;
       } else if (arg.startsWith('--tool-timeout=')) {
         globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
       }
@@ -230,6 +233,7 @@ function parseArgs(argv: string[]): {
     else if (arg === '--verbose') globals.verbose = true;
     else if (arg.startsWith('--timeout=')) {
       globals.timeout = parseInt(arg.split('=')[1], 10);
+      globals.timeoutExplicit = true;
     } else if (arg.startsWith('--tool-timeout=')) {
       globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
     }
@@ -268,7 +272,8 @@ async function discoverToolsEx(
   const daemonClient = new DaemonClient(command, args, {
     verbose: options.verbose,
     debug: options.debug,
-    timeout: options.timeout, // Pass timeout in seconds, let DaemonClient handle conversion
+    // Only pass timeout when explicitly set to avoid unintentionally reloading the job
+    timeout: options.timeoutExplicit ? options.timeout : undefined,
     toolTimeoutMs:
       typeof options.toolTimeoutSeconds === 'number' && !isNaN(options.toolTimeoutSeconds)
         ? Math.max(1, Math.trunc(options.toolTimeoutSeconds)) * 1000
@@ -875,6 +880,35 @@ async function main(): Promise<void> {
             await handleDaemonLogs(spec.command, spec.args, { ...options, env: spec.env });
           } else {
             await handleDaemonLogs();
+          }
+          break;
+        }
+
+        case 'log': {
+          // Parse optional --since= window and optional spec after --
+          let since = '5m';
+          const flags: string[] = [];
+          for (const a of daemonArgs) {
+            if (a.startsWith('--since=')) since = a.split('=')[1] || since;
+            else flags.push(a);
+          }
+          const idx = flags.indexOf('--');
+          if (idx !== -1) {
+            let spec;
+            try {
+              spec = parseCommandSpec(flags.slice(idx + 1));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`Error: ${msg}`);
+              process.exit(1);
+            }
+            await (
+              await import('./daemon/commands.ts')
+            ).handleDaemonLogShow(spec.command, spec.args, options, since);
+          } else {
+            await (
+              await import('./daemon/commands.ts')
+            ).handleDaemonLogShow(undefined, [], options, since);
           }
           break;
         }
