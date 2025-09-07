@@ -42,6 +42,9 @@ class MCPLIDaemon {
   private mcpClient: Client | null = null;
   private ipcServer: IPCServer | null = null;
   private inactivityTimeout: NodeJS.Timeout | null = null;
+  private inactivityWatchdog: NodeJS.Timeout | null = null;
+  private lastActivityAt: number = Date.now();
+  private lastHeartbeatBucket: number = -1;
 
   private isShuttingDown = false;
   private allowShutdown = false;
@@ -61,6 +64,19 @@ class MCPLIDaemon {
   private orchestrator: string;
   private socketEnvKey: string;
   private socketPath?: string;
+
+  // Debug file logging helper (used only when debug is enabled)
+  private async debugAppend(line: string): Promise<void> {
+    if (!this.debug) return;
+    try {
+      const fs = await import('fs/promises');
+      const id = this.daemonId ?? 'unknown';
+      const p = `${this.cwd}/.mcpli/idle-${id}.log`;
+      await fs.appendFile(p, `${new Date().toISOString()} | ${line}\n`);
+    } catch {
+      // ignore
+    }
+  }
 
   constructor() {
     // Generate unique process ID for tracking
@@ -193,8 +209,18 @@ class MCPLIDaemon {
       // Inactivity timer
       this.resetInactivityTimer();
 
+      // Start watchdog to enforce inactivity shutdown even if a one-shot timer is missed
+      this.startInactivityWatchdog();
+
       if (this.debug) {
         console.log('[DAEMON] Started successfully');
+        console.log(`[DAEMON] Inactivity timeout configured: ${this.timeoutMs}ms`);
+        try {
+          osLog(`[MCPLI:${this.daemonId}] Inactivity timeout configured: ${this.timeoutMs}ms`);
+        } catch {
+          // ignore
+        }
+        await this.debugAppend(`start | timeoutMs=${this.timeoutMs}`);
       }
     } catch (error) {
       console.error('[DAEMON] Failed to start:', error);
@@ -340,6 +366,11 @@ class MCPLIDaemon {
 
   async handleIPCRequest(request: IPCRequest): Promise<unknown> {
     this.resetInactivityTimer();
+    try {
+      osLog(`[MCPLI:${this.daemonId}] IPC request: ${request.method}`);
+    } catch {
+      // ignore
+    }
 
     if (this.debug) {
       console.log(`[DAEMON] Handling IPC request: ${request.method}`);
@@ -417,20 +448,27 @@ class MCPLIDaemon {
     if (this.inactivityTimeout) {
       clearTimeout(this.inactivityTimeout);
     }
+    this.lastActivityAt = Date.now();
 
     if (this.debug) {
-      console.log('[DAEMON] Inactivity timer reset');
+      const deadline = Date.now() + this.timeoutMs;
+      console.log(
+        `[DAEMON] Inactivity timer reset: ${this.timeoutMs}ms (deadline ${new Date(deadline).toISOString()})`,
+      );
       try {
         osLog(`[MCPLI:${this.daemonId}] Inactivity timer reset to ${this.timeoutMs}ms`);
       } catch {
         // ignore osLog errors
       }
+      void this.debugAppend(
+        `reset | timeoutMs=${this.timeoutMs} | deadline=${new Date(deadline).toISOString()}`,
+      );
     }
 
     // Set up inactivity timeout - allow shutdown after idle period
     this.inactivityTimeout = setTimeout(() => {
       if (this.debug) {
-        console.log('[DAEMON] Shutting down due to inactivity');
+        console.log('[DAEMON] Inactivity deadline reached; initiating shutdown');
         try {
           osLog(`[MCPLI:${this.daemonId}] Shutting down due to inactivity`);
         } catch {
@@ -441,8 +479,68 @@ class MCPLIDaemon {
     }, this.timeoutMs);
   }
 
+  private startInactivityWatchdog(): void {
+    if (this.inactivityWatchdog) {
+      clearInterval(this.inactivityWatchdog as unknown as number);
+      this.inactivityWatchdog = null;
+    }
+    const tickMs = 1000;
+    void this.debugAppend('watchdog-start');
+    if (this.debug) {
+      console.log('[DAEMON] Inactivity watchdog started');
+      try {
+        osLog(`[MCPLI:${this.daemonId}] Inactivity watchdog started`);
+      } catch {
+        // ignore
+      }
+    }
+
+    this.inactivityWatchdog = setInterval(() => {
+      const idleMs = Date.now() - this.lastActivityAt;
+      const bucket = Math.floor(idleMs / 2000);
+      if (this.debug && bucket !== this.lastHeartbeatBucket) {
+        this.lastHeartbeatBucket = bucket;
+        const msg = `[DAEMON] Watchdog idle=${idleMs}ms (timeout ${this.timeoutMs}ms)`;
+        console.log(msg);
+        try {
+          osLog(`[MCPLI:${this.daemonId}] ${msg}`);
+        } catch {
+          /* ignore */
+        }
+        void this.debugAppend(`heartbeat | idleMs=${idleMs}`);
+      }
+      if (idleMs >= this.timeoutMs) {
+        if (this.debug) {
+          console.log(
+            `[DAEMON] Inactivity watchdog trigger: idle ${idleMs}ms >= ${this.timeoutMs}ms`,
+          );
+          try {
+            osLog(
+              `[MCPLI:${this.daemonId}] Inactivity watchdog trigger: idle ${idleMs}ms >= ${this.timeoutMs}ms`,
+            );
+          } catch {
+            // ignore
+          }
+          void this.debugAppend(`trigger | idleMs=${idleMs}`);
+        }
+        this.shutdownForInactivity();
+      }
+    }, tickMs);
+    // Do not hold the event loop open on watchdog alone
+    const maybeUnref = (this.inactivityWatchdog as unknown as { unref?: () => void }).unref;
+    if (typeof maybeUnref === 'function') {
+      maybeUnref.call(this.inactivityWatchdog);
+    }
+  }
+
   private shutdownForInactivity(): void {
     this.allowShutdown = true;
+    try {
+      osLog(`[MCPLI:${this.daemonId}] shutdownForInactivity called; allowShutdown=1`);
+    } catch {
+      // ignore
+    }
+    void this.debugAppend('shutdownForInactivity');
     this.gracefulShutdown('inactivity timeout');
   }
 
@@ -461,6 +559,13 @@ class MCPLIDaemon {
           `[DAEMON:${this.processId}] SHUTDOWN BLOCKED - NOT ALLOWED (reason: ${reason ?? 'unknown'})`,
         );
       }
+      try {
+        osLog(
+          `[MCPLI:${this.daemonId}] SHUTDOWN BLOCKED - NOT ALLOWED (reason: ${reason ?? 'unknown'})`,
+        );
+      } catch {
+        // ignore
+      }
       return;
     }
 
@@ -471,6 +576,14 @@ class MCPLIDaemon {
         `[DAEMON:${this.processId}] GRACEFUL SHUTDOWN INITIATED (reason: ${reason ?? 'unknown'})`,
       );
     }
+    try {
+      osLog(
+        `[MCPLI:${this.daemonId}] GRACEFUL SHUTDOWN INITIATED (reason: ${reason ?? 'unknown'})`,
+      );
+    } catch {
+      // ignore
+    }
+    void this.debugAppend(`gracefulShutdown | reason=${reason ?? 'n/a'}`);
 
     if (this.inactivityTimeout) {
       clearTimeout(this.inactivityTimeout);
@@ -492,6 +605,15 @@ class MCPLIDaemon {
       }
     } catch (error) {
       console.error('[DAEMON] Error during shutdown:', error);
+    }
+
+    if (this.inactivityWatchdog) {
+      try {
+        clearInterval(this.inactivityWatchdog as unknown as number);
+      } catch {
+        // ignore
+      }
+      this.inactivityWatchdog = null;
     }
 
     if (this.debug) {
