@@ -271,20 +271,25 @@ export async function handleDaemonLogs(
 }
 
 /**
- * Show recent daemon logs (non-interactive) using macOS unified logging.
- * Optional command/args may filter to a specific daemon by identity.
- * @param since e.g., '20s', '5m', '1h' (default '5m')
+ * Print help text for daemon subcommands.
+ *
+ * @returns Nothing; prints to stdout.
  */
 export async function handleDaemonLogShow(
   command?: string,
   args: string[] = [],
   options: DaemonCommandOptions = {},
-  since: string = '5m',
+  since: string = '2m',
 ): Promise<void> {
   if (process.platform !== 'darwin') {
     console.error('Daemon logs are only available on macOS.');
     process.exit(1);
   }
+
+  const sinceFinal =
+    process.env.MCPLI_LOG_SINCE && process.env.MCPLI_LOG_SINCE.trim() !== ''
+      ? (process.env.MCPLI_LOG_SINCE as string)
+      : since;
 
   let predicate: string;
   if (command?.trim()) {
@@ -297,7 +302,7 @@ export async function handleDaemonLogShow(
 
   const proc = spawn(
     '/usr/bin/log',
-    ['show', '--style', 'compact', '--last', since, '--predicate', predicate],
+    ['show', '--style', 'compact', '--last', sinceFinal, '--predicate', predicate],
     {
       stdio: ['ignore', 'inherit', 'inherit'],
     },
@@ -312,11 +317,6 @@ export async function handleDaemonLogShow(
   });
 }
 
-/**
- * Print help text for daemon subcommands.
- *
- * @returns Nothing; prints to stdout.
- */
 export function printDaemonHelp(): void {
   console.log('MCPLI Daemon Management');
   console.log('');
@@ -329,7 +329,7 @@ export function printDaemonHelp(): void {
   console.log('  restart [-- command args...]     Restart specific daemon or all daemons');
   console.log('  status                           Show all running daemons');
   console.log('  logs                             Show daemon log output');
-  console.log('  log [--since=5m]                 Show recent daemon logs (non-interactive)');
+  console.log('  log [--since=2m]                 Show recent daemon logs (non-interactive)');
   console.log('  clean                            Clean up all daemon files');
   console.log('');
   console.log('Options:');

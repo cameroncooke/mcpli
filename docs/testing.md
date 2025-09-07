@@ -271,7 +271,13 @@ mcpli daemon restart
 - View daemon logs (if started with `--logs` or `--verbose`):
 
 ```bash
+# Live stream
 mcpli daemon logs
+
+# Non-interactive snapshot (last 2 minutes by default)
+mcpli daemon log --since=2m
+# Filter to a specific daemon by including the server command after --
+mcpli daemon log --since=2m -- -- node weather-server.js
 ```
 
 - Clean up daemon files (stops running daemons where possible, removes stale locks/sockets):
@@ -476,10 +482,8 @@ mcpli daemon start --debug --timeout=6 -- node weather-server.js
 mcpli daemon status
 
 # Observe OSLog for inactivity timer reset and shutdown events (macOS only)
-mcpli daemon logs &
-LOGPID=$!
-sleep 8
-kill -INT $LOGPID
+# Non-interactive snapshot (recommended):
+mcpli daemon log --since=20s -- -- node weather-server.js
 
 # Then verify status shows the daemon is no longer running
 mcpli daemon status

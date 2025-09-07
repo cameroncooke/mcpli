@@ -408,6 +408,13 @@ stateDiagram-v2
 
 ## macOS launchd Integration
 
+### Operational Logs
+
+- Live streaming: `mcpli daemon logs` (Ctrl+C to exit)
+- Non-interactive snapshots: `mcpli daemon log [--since=2m] [-- <server>]`
+  - Uses macOS unified logging (OSLog) with MCPLI-specific predicates
+  - Default window can be configured via `MCPLI_LOG_SINCE` (e.g., `export MCPLI_LOG_SINCE=10m`)
+
 ### launchd Service Architecture
 
 MCPLI leverages macOS launchd for robust daemon process management and automatic service recovery.
