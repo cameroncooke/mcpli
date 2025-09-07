@@ -12,6 +12,7 @@ import {
   Orchestrator,
 } from './runtime.ts';
 import { getConfig } from '../config.ts';
+import { parsePositiveIntMs } from './mcp-client-utils.ts';
 
 /**
  * Options for interacting with the MCPLI daemon through the orchestrator.
@@ -36,6 +37,8 @@ export interface DaemonClientOptions {
   timeout?: number;
   /** IPC request timeout in milliseconds (overrides config default). */
   ipcTimeoutMs?: number;
+  /** Default tool timeout in milliseconds (front-facing). */
+  toolTimeoutMs?: number;
 }
 
 /**
@@ -115,6 +118,29 @@ export class DaemonClient {
     if (this.options.debug) {
       console.time('[DEBUG] orchestrator.ensure');
     }
+    // Determine effective tool timeout (ms) from flag/env/defaults
+    const cfgForTool = getConfig();
+    const effectiveToolTimeoutMs = ((): number => {
+      const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
+      if (fromFlag) return Math.max(1000, fromFlag);
+      const env = this.options.env ?? {};
+      const fromFrontEnv = parsePositiveIntMs(
+        (env as Record<string, unknown>).MCPLI_TOOL_TIMEOUT_MS,
+      );
+      if (fromFrontEnv) return Math.max(1000, fromFrontEnv);
+      const fromCfg = parsePositiveIntMs(cfgForTool.defaultToolTimeoutMs);
+      return Math.max(1000, fromCfg ?? 600_000);
+    })();
+    const toolTimeoutExplicit = (() => {
+      const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
+      if (fromFlag) return true;
+      const env = this.options.env ?? {};
+      const fromFrontEnv = parsePositiveIntMs(
+        (env as Record<string, unknown>).MCPLI_TOOL_TIMEOUT_MS,
+      );
+      return Boolean(fromFrontEnv);
+    })();
+
     const ensureRes = await orchestrator.ensure(this.command, this.args, {
       cwd,
       env: this.options.env ?? {},
@@ -122,6 +148,8 @@ export class DaemonClient {
       logs: Boolean(this.options.logs ?? this.options.verbose),
       verbose: this.options.verbose,
       timeout: this.options.timeout, // Pass seconds, commands.ts will convert to ms
+      // Propagate computed tool timeout to wrapper without affecting identity
+      toolTimeoutMs: effectiveToolTimeoutMs,
       preferImmediateStart: Boolean(
         this.options.logs ?? this.options.verbose ?? this.options.debug,
       ),
@@ -130,6 +158,9 @@ export class DaemonClient {
       console.timeEnd('[DEBUG] orchestrator.ensure');
       console.debug(
         `[DEBUG] ensure result: action=${ensureRes.updateAction ?? 'unchanged'}, started=${ensureRes.started ? '1' : '0'}, pid=${typeof ensureRes.pid === 'number' ? ensureRes.pid : 'n/a'}`,
+      );
+      console.debug(
+        `[DEBUG] effective tool timeout: ${effectiveToolTimeoutMs}ms (flag/env/config); IPC base timeout: ${this.ipcTimeoutMs}ms`,
       );
     }
 
@@ -143,9 +174,40 @@ export class DaemonClient {
     if (this.options.debug) {
       console.time('[DEBUG] IPC request');
     }
-    const result = await sendIPCRequest(ensureRes.socketPath, request, this.ipcTimeoutMs);
+    // Ensure IPC timeout never undercuts tool timeout: add 60s buffer for tool calls
+    const toolTimeoutMs = effectiveToolTimeoutMs;
+    // Ensure IPC timeout never undercuts tool timeout. For callTool we always buffer.
+    // For listTools, if a tool timeout is provided (via flag/env), also raise IPC to avoid
+    // discovery timing out before long-running servers become ready.
+    const timeoutForRequest = (() => {
+      if (method === 'callTool') {
+        return Math.max(this.ipcTimeoutMs, toolTimeoutMs + 60_000);
+      }
+      if (method === 'listTools' && toolTimeoutExplicit) {
+        return Math.max(this.ipcTimeoutMs, effectiveToolTimeoutMs + 60_000);
+      }
+      return this.ipcTimeoutMs;
+    })();
+
+    // Heuristic: if the job was just (re)loaded or explicitly started, allow a
+    // larger connect retry budget to ride out launchd socket rebind races.
+    const needsExtraConnectBudget =
+      ensureRes.updateAction === 'loaded' ||
+      ensureRes.updateAction === 'reloaded' ||
+      !!ensureRes.started;
+    const connectRetryBudgetMs = needsExtraConnectBudget ? 8000 : undefined;
+
+    const result = await sendIPCRequest(
+      ensureRes.socketPath,
+      request,
+      timeoutForRequest,
+      connectRetryBudgetMs,
+    );
     if (this.options.debug) {
       console.timeEnd('[DEBUG] IPC request');
+      console.debug(
+        `[DEBUG] IPC timeout used: ${timeoutForRequest}ms; connect retry budget: ${connectRetryBudgetMs ?? 'default'}`,
+      );
     }
     return result;
   }

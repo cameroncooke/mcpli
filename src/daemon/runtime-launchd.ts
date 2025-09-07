@@ -545,6 +545,10 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
             ? opts.timeout * 1000
             : 1800000,
       ),
+      // Optional: user-facing tool timeout passed by CLI flag/env
+      ...(typeof opts.toolTimeoutMs === 'number' && !isNaN(opts.toolTimeoutMs)
+        ? { MCPLI_TOOL_TIMEOUT_MS: String(Math.max(1000, Math.trunc(opts.toolTimeoutMs))) }
+        : {}),
       MCPLI_COMMAND: command,
       MCPLI_ARGS: JSON.stringify(args),
       MCPLI_SERVER_ENV: JSON.stringify(opts.env ?? {}),
@@ -589,7 +593,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     // This is a small poll for presence; it does not connect or block long.
     try {
       const fsP = await import('fs/promises');
-      const deadline = Date.now() + 500; // up to 0.5s
+      const deadline = Date.now() + 2000; // up to ~2s for socket presence
 
       while (true) {
         try {
@@ -597,7 +601,7 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
           break;
         } catch {
           if (Date.now() >= deadline) break;
-          await new Promise((r) => setTimeout(r, 25));
+          await new Promise((r) => setTimeout(r, 30));
         }
       }
     } catch {

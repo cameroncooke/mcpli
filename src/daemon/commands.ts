@@ -22,6 +22,8 @@ export interface DaemonCommandOptions {
   logs?: boolean;
   /** Daemon inactivity timeout in seconds. */
   timeout?: number;
+  /** Default tool execution timeout in milliseconds (front-facing). */
+  toolTimeoutMs?: number;
   /** Suppress non-essential output. */
   quiet?: boolean;
 }
@@ -61,6 +63,11 @@ export async function handleDaemonStart(
       debug: options.debug,
       logs: options.logs,
       timeout: options.timeout, // Pass seconds, runtime will convert to ms
+      // Propagate tool timeout to wrapper via env (MCPLI_TOOL_TIMEOUT_MS)
+      toolTimeoutMs:
+        typeof options.toolTimeoutMs === 'number' && !isNaN(options.toolTimeoutMs)
+          ? Math.max(1000, Math.trunc(options.toolTimeoutMs))
+          : undefined,
       preferImmediateStart: true,
     });
 
@@ -286,6 +293,7 @@ export function printDaemonHelp(): void {
   console.log('  --debug                          Enable debug output');
   console.log('  --quiet, -q                      Suppress informational output');
   console.log('  --timeout=<seconds>              Set daemon inactivity timeout (seconds)');
+  console.log('  --tool-timeout=<seconds>         Set default tool execution timeout (seconds)');
   console.log('');
   console.log('Notes:');
   console.log('  - Daemons are command-specific per directory using stable daemon IDs');

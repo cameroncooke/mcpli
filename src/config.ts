@@ -20,6 +20,8 @@ export interface MCPLIConfig {
   defaultCliTimeoutSeconds: number;
   /** Default IPC connection timeout in milliseconds */
   defaultIpcTimeoutMs: number;
+  /** Default MCP client tool timeout in milliseconds */
+  defaultToolTimeoutMs: number;
 }
 
 /**
@@ -32,6 +34,8 @@ export const ENV_VARS = {
   MCPLI_CLI_TIMEOUT: 'MCPLI_CLI_TIMEOUT',
   /** IPC connection timeout in milliseconds */
   MCPLI_IPC_TIMEOUT: 'MCPLI_IPC_TIMEOUT',
+  /** Preferred user-facing tool timeout in milliseconds */
+  MCPLI_TOOL_TIMEOUT_MS: 'MCPLI_TOOL_TIMEOUT_MS',
 } as const;
 
 /**
@@ -40,7 +44,9 @@ export const ENV_VARS = {
 const DEFAULT_CONFIG: MCPLIConfig = {
   defaultTimeoutSeconds: 1800, // 30 minutes
   defaultCliTimeoutSeconds: 30, // 30 seconds
-  defaultIpcTimeoutMs: 300000, // 5 minutes
+  // IPC timeout must exceed tool timeout; set to tool (10m) + 1m buffer
+  defaultIpcTimeoutMs: 660000, // 11 minutes
+  defaultToolTimeoutMs: 600000, // 10 minutes
 };
 
 /**
@@ -59,6 +65,11 @@ export function getConfig(): MCPLIConfig {
     defaultIpcTimeoutMs: parsePositiveIntEnv(
       ENV_VARS.MCPLI_IPC_TIMEOUT,
       DEFAULT_CONFIG.defaultIpcTimeoutMs,
+    ),
+    // Front-facing tool timeout only
+    defaultToolTimeoutMs: parsePositiveIntEnv(
+      ENV_VARS.MCPLI_TOOL_TIMEOUT_MS,
+      DEFAULT_CONFIG.defaultToolTimeoutMs,
     ),
   };
 }

@@ -148,6 +148,16 @@ The client implements a streamlined daemon lifecycle management system:
 3. **Orchestrator.ensure**: ensure() creates or updates the launchd plist and socket for the daemon identity and returns the socket path. It does not restart the daemon unless explicitly requested.
 4. **preferImmediateStart=false**: The client requests ensure() with preferImmediateStart=false to avoid kickstarting on every request, eliminating the previous 10+ second delays caused by restarts.
 
+5. **Adaptive connect retry budget**: When `orchestrator.ensure()` reports the job was just
+   `loaded` or `reloaded` (or explicitly `started`), the client temporarily raises the IPC
+   connect retry budget to approximately 8 seconds. This smooths over the brief launchd
+   socket rebind window after a plist update so the first post‑update connection does not fail
+   with `ECONNREFUSED`. In steady‑state (no update), the default short retry budget is used.
+
+6. **IPC timeout auto‑buffering**: For tool calls, the IPC request timeout automatically
+   buffers above the effective tool timeout (tool + 60s) to ensure the transport timeout never
+   undercuts the tool timeout.
+
 ### Daemon Wrapper (`src/daemon/wrapper.ts`)
 
 The daemon wrapper runs as the long-lived daemon process and manages the MCP server connection.

@@ -300,6 +300,15 @@ API_KEY=dev mcpli daemon start -- node weather-server.js
 mcpli daemon start -- node weather-server.js
 ```
 
+#### Timeouts Overview
+
+MCPLI uses two primary user-facing timeouts:
+
+- Daemon inactivity timeout: how long an idle daemon stays alive.
+- Tool execution timeout: how long a single MCP tool call may run.
+
+IPC is managed automatically and will be set to at least tool timeout + 60 seconds to avoid premature disconnections.
+
 #### Daemon Timeouts
 
 Daemons automatically shut down after a period of inactivity to free up resources (default: 30 minutes). You can customize this timeout:
@@ -313,6 +322,23 @@ mcpli daemon start --timeout=3600 -- node weather-server.js
 ```
 
 The timeout resets every time you make a request to the daemon. Once the timeout period passes without any activity, the daemon gracefully shuts down and cleans up its files.
+
+#### Tool Timeouts
+
+Control how long a single MCP tool call may run (default: 10 minutes).
+
+```bash
+# Per-invocation: set tool timeout to 15 minutes (900 seconds)
+mcpli get-weather --tool-timeout=900 --location "NYC" -- node weather-server.js
+
+# Global default via env (milliseconds)
+export MCPLI_TOOL_TIMEOUT_MS=900000
+```
+
+Notes:
+- `--tool-timeout` uses seconds, matching `--timeout` for consistency.
+- `MCPLI_TOOL_TIMEOUT_MS` is the env for defaults.
+- IPC timeout automatically adjusts to ≥ tool timeout + 60s for tool calls.
 
 ### Environment Variables
 
@@ -330,10 +356,14 @@ mcpli get-weather --timeout=1200 --location "NYC" -- node weather-server.js
 ```
 
 Available environment variables:
-- **`MCPLI_DEFAULT_TIMEOUT`**: Default daemon inactivity timeout in seconds (default: 1800)
-- **`MCPLI_CLI_TIMEOUT`**: Default CLI operation timeout in seconds (default: 30)
-- **`MCPLI_IPC_TIMEOUT`**: Default IPC connection timeout in milliseconds (default: 300000)
- - **`MCPLI_TIMEOUT`**: Internal daemon wrapper timeout in milliseconds; derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000). Typically not set directly.
+- `MCPLI_DEFAULT_TIMEOUT`: Daemon inactivity timeout in seconds (default: 1800)
+- `MCPLI_TOOL_TIMEOUT_MS`: Default tool execution timeout in milliseconds (default: 600000)
+- `MCPLI_IPC_TIMEOUT`: IPC connection timeout in milliseconds (default: 660000). For advanced tuning; generally unnecessary due to auto-buffering.
+- `MCPLI_IPC_CONNECT_RETRY_BUDGET_MS`: Advanced — total time budget for retrying the initial socket connect after `orchestrator.ensure()` (default: 3000). The client automatically raises the effective budget to ~8000ms on the first connection after a launchd plist update (job `loaded`/`reloaded`) to ride out transient socket rebinds. In steady‑state, this env sets the baseline.
+- `MCPLI_TIMEOUT`: Internal wrapper inactivity timeout (ms); derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000). Typically not set directly.
+
+Deprecated/unused:
+- `MCPLI_CLI_TIMEOUT`: Reserved for future use; not currently enforced.
 
 ### Debugging
 

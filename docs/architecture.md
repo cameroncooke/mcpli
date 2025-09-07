@@ -64,6 +64,8 @@ The client implements a streamlined daemon lifecycle management system:
 2. **No preflight checks**: The client does not ping before sending the request. It relies on launchd to spawn the daemon on first connection if needed.
 3. **Orchestrator.ensure**: ensure() creates or updates the launchd plist and socket for the daemon identity and returns the socket path. It does not restart the daemon unless explicitly requested.
 4. **preferImmediateStart=false**: The client requests ensure() with preferImmediateStart=false to avoid kickstarting on every request, eliminating the previous 10+ second delays caused by restarts.
+5. **Adaptive Connect Retry Budget**: When `orchestrator.ensure()` indicates the job was just `loaded` or `reloaded` (or explicitly `started`), the client temporarily increases the IPC connect retry budget to ~8 seconds. This smooths over the brief socket rebind window under launchd after a plist update, preventing transient `ECONNREFUSED`. In steady-state (no update), a short default budget (~3s) is used.
+6. **IPC Timeout Auto‑Buffering**: For tool calls, IPC timeout is automatically set to at least `(tool timeout + 60s)` to ensure the transport timeout never undercuts tool execution timeout.
 
 ### Daemon Wrapper (`src/daemon/wrapper.ts`)
 
@@ -191,10 +193,10 @@ MCPLI uses a centralized configuration system (src/config.ts) that provides envi
 3. **Built-in defaults** (1800 seconds)
 
 ### Environment Variables:
-- **`MCPLI_DEFAULT_TIMEOUT`**: Daemon inactivity timeout in seconds
-- **`MCPLI_CLI_TIMEOUT`**: CLI operation timeout in seconds
-- **`MCPLI_IPC_TIMEOUT`**: IPC connection timeout in milliseconds
- - **`MCPLI_TIMEOUT`**: Internal daemon wrapper timeout in milliseconds; derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000)
+- `MCPLI_DEFAULT_TIMEOUT`: Daemon inactivity timeout in seconds
+- `MCPLI_TOOL_TIMEOUT_MS`: Default tool execution timeout in milliseconds (preferred)
+- `MCPLI_IPC_TIMEOUT`: IPC connection timeout in milliseconds (auto-buffer ≥ tool+60s)
+- `MCPLI_TIMEOUT`: Internal daemon wrapper timeout in milliseconds; derived from CLI `--timeout` or `MCPLI_DEFAULT_TIMEOUT` (default: 1800000)
 
 ## Performance Characteristics
 

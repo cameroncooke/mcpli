@@ -12,6 +12,7 @@ import { createIPCServer, createIPCServerFromLaunchdSocket, IPCRequest, IPCServe
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { computeDaemonId, deriveIdentityEnv } from './runtime.ts';
+import { callToolWithDefaultTimeout, getDefaultToolTimeoutMs } from './mcp-client-utils.ts';
 import { spawn } from 'child_process';
 
 function osLog(message: string): void {
@@ -370,10 +371,28 @@ class MCPLIDaemon {
           if (args !== undefined && (typeof args !== 'object' || Array.isArray(args))) {
             throw new Error('Invalid callTool params: "arguments" must be an object when provided');
           }
-          result = await this.mcpClient.callTool({
-            name,
-            arguments: args as Record<string, unknown> | undefined,
-          });
+          // Compute and log the effective tool timeout for debug diagnostics
+          const defaultTimeoutMs = getDefaultToolTimeoutMs();
+          if (this.debug) {
+            console.log(
+              `[DAEMON] Using MCP tool timeout: ${defaultTimeoutMs}ms (from env/config; override per-call unsupported at wrapper layer)`,
+            );
+            try {
+              osLog(`[MCPLI:${this.daemonId}] Tool timeout in effect: ${defaultTimeoutMs}ms`);
+            } catch {
+              // osLog best-effort
+            }
+          }
+
+          result = await callToolWithDefaultTimeout(
+            this.mcpClient,
+            {
+              name,
+              arguments: args as Record<string, unknown> | undefined,
+            },
+            undefined,
+            { timeout: defaultTimeoutMs },
+          );
           break;
         }
 
