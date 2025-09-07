@@ -44,7 +44,6 @@ class MCPLIDaemon {
   private inactivityTimeout: NodeJS.Timeout | null = null;
   private inactivityWatchdog: NodeJS.Timeout | null = null;
   private lastActivityAt: number = Date.now();
-  private lastHeartbeatBucket: number = -1;
 
   private isShuttingDown = false;
   private allowShutdown = false;
@@ -65,18 +64,7 @@ class MCPLIDaemon {
   private socketEnvKey: string;
   private socketPath?: string;
 
-  // Debug file logging helper (used only when debug is enabled)
-  private async debugAppend(line: string): Promise<void> {
-    if (!this.debug) return;
-    try {
-      const fs = await import('fs/promises');
-      const id = this.daemonId ?? 'unknown';
-      const p = `${this.cwd}/.mcpli/idle-${id}.log`;
-      await fs.appendFile(p, `${new Date().toISOString()} | ${line}\n`);
-    } catch {
-      // ignore
-    }
-  }
+  // (No file-based debug logging in production build)
 
   constructor() {
     // Generate unique process ID for tracking
@@ -162,9 +150,10 @@ class MCPLIDaemon {
           verbose?: boolean;
           quiet?: boolean;
         };
-        if (typeof diag.debug === 'boolean') this.debug = diag.debug;
-        if (typeof diag.verbose === 'boolean') this.verbose = diag.verbose;
-        if (typeof diag.quiet === 'boolean') this.quiet = diag.quiet;
+        // OR with env-derived values so env can enable debug even if diag is false
+        if (typeof diag.debug === 'boolean') this.debug = this.debug || diag.debug;
+        if (typeof diag.verbose === 'boolean') this.verbose = this.verbose || diag.verbose;
+        if (typeof diag.quiet === 'boolean') this.quiet = this.quiet || diag.quiet;
       } catch {
         // best-effort only
       }
@@ -220,7 +209,7 @@ class MCPLIDaemon {
         } catch {
           // ignore
         }
-        await this.debugAppend(`start | timeoutMs=${this.timeoutMs}`);
+        // concise debug only
       }
     } catch (error) {
       console.error('[DAEMON] Failed to start:', error);
@@ -451,18 +440,12 @@ class MCPLIDaemon {
     this.lastActivityAt = Date.now();
 
     if (this.debug) {
-      const deadline = Date.now() + this.timeoutMs;
-      console.log(
-        `[DAEMON] Inactivity timer reset: ${this.timeoutMs}ms (deadline ${new Date(deadline).toISOString()})`,
-      );
+      console.log(`[DAEMON] Inactivity timer reset: ${this.timeoutMs}ms`);
       try {
         osLog(`[MCPLI:${this.daemonId}] Inactivity timer reset to ${this.timeoutMs}ms`);
       } catch {
         // ignore osLog errors
       }
-      void this.debugAppend(
-        `reset | timeoutMs=${this.timeoutMs} | deadline=${new Date(deadline).toISOString()}`,
-      );
     }
 
     // Set up inactivity timeout - allow shutdown after idle period
@@ -485,7 +468,6 @@ class MCPLIDaemon {
       this.inactivityWatchdog = null;
     }
     const tickMs = 1000;
-    void this.debugAppend('watchdog-start');
     if (this.debug) {
       console.log('[DAEMON] Inactivity watchdog started');
       try {
@@ -497,18 +479,7 @@ class MCPLIDaemon {
 
     this.inactivityWatchdog = setInterval(() => {
       const idleMs = Date.now() - this.lastActivityAt;
-      const bucket = Math.floor(idleMs / 2000);
-      if (this.debug && bucket !== this.lastHeartbeatBucket) {
-        this.lastHeartbeatBucket = bucket;
-        const msg = `[DAEMON] Watchdog idle=${idleMs}ms (timeout ${this.timeoutMs}ms)`;
-        console.log(msg);
-        try {
-          osLog(`[MCPLI:${this.daemonId}] ${msg}`);
-        } catch {
-          /* ignore */
-        }
-        void this.debugAppend(`heartbeat | idleMs=${idleMs}`);
-      }
+      // Suppress noisy heartbeat logging; only log on trigger
       if (idleMs >= this.timeoutMs) {
         if (this.debug) {
           console.log(
@@ -521,16 +492,12 @@ class MCPLIDaemon {
           } catch {
             // ignore
           }
-          void this.debugAppend(`trigger | idleMs=${idleMs}`);
         }
         this.shutdownForInactivity();
       }
     }, tickMs);
-    // Do not hold the event loop open on watchdog alone
-    const maybeUnref = (this.inactivityWatchdog as unknown as { unref?: () => void }).unref;
-    if (typeof maybeUnref === 'function') {
-      maybeUnref.call(this.inactivityWatchdog);
-    }
+    // Keep watchdog as a ref'ed timer to ensure it fires even when the process is otherwise idle.
+    // We still exit explicitly in gracefulShutdown, so this won't block termination.
   }
 
   private shutdownForInactivity(): void {
@@ -540,7 +507,6 @@ class MCPLIDaemon {
     } catch {
       // ignore
     }
-    void this.debugAppend('shutdownForInactivity');
     this.gracefulShutdown('inactivity timeout');
   }
 
@@ -583,7 +549,7 @@ class MCPLIDaemon {
     } catch {
       // ignore
     }
-    void this.debugAppend(`gracefulShutdown | reason=${reason ?? 'n/a'}`);
+    // concise debug only
 
     if (this.inactivityTimeout) {
       clearTimeout(this.inactivityTimeout);

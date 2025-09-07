@@ -529,22 +529,15 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     const __dirname = path.dirname(__filename);
     const wrapperPath = path.join(__dirname, 'daemon', 'wrapper.js');
 
-    // Build environment for wrapper
+    // Build environment for wrapper (preserve prior MCPLI_* flags when not explicitly provided)
     const wantLogs = Boolean(opts.logs ?? opts.verbose);
     // No log files - use OSLog instead for automatic cleanup
     // Base daemon environment (affects identity) - excludes MCPLI diagnostic flags
-    const daemonEnv: Record<string, string> = {
+    const daemonEnvBase: Record<string, string> = {
       MCPLI_ORCHESTRATOR: 'launchd',
       MCPLI_SOCKET_ENV_KEY: 'MCPLI_SOCKET',
       MCPLI_SOCKET_PATH: socketPath, // optional: for compatibility and diagnostics
       MCPLI_CWD: cwd,
-      MCPLI_TIMEOUT: String(
-        typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs)
-          ? opts.timeoutMs
-          : typeof opts.timeout === 'number' && !isNaN(opts.timeout)
-            ? opts.timeout * 1000
-            : 1800000,
-      ),
       // Optional: user-facing tool timeout passed by CLI flag/env
       ...(typeof opts.toolTimeoutMs === 'number' && !isNaN(opts.toolTimeoutMs)
         ? { MCPLI_TOOL_TIMEOUT_MS: String(Math.max(1000, Math.trunc(opts.toolTimeoutMs))) }
@@ -558,6 +551,43 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
       // Preserve the user's PATH so child commands like `npx` can be resolved under launchd
       // This does not affect identity hashing since only explicit server env is used there.
       PATH: process.env.PATH ?? '',
+    };
+
+    // Preserve prior settings when options not provided
+    let prevPlist: string | undefined;
+    try {
+      prevPlist = await fs.readFile(this.plistPath(cwd, id), 'utf8');
+    } catch {
+      // no previous
+    }
+
+    const readTag = (content: string | undefined, key: string): string | undefined => {
+      if (!content) return undefined;
+      const re = new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`, 'm');
+      const m = content.match(re);
+      return m ? m[1] : undefined;
+    };
+
+    const priorTimeout = readTag(prevPlist, 'MCPLI_TIMEOUT');
+    const priorDebug = readTag(prevPlist, 'MCPLI_DEBUG');
+    const priorVerbose = readTag(prevPlist, 'MCPLI_VERBOSE');
+    const priorQuiet = readTag(prevPlist, 'MCPLI_QUIET');
+
+    const effectiveTimeoutMs =
+      typeof opts.timeoutMs === 'number' && !isNaN(opts.timeoutMs)
+        ? Math.trunc(opts.timeoutMs)
+        : typeof opts.timeout === 'number' && !isNaN(opts.timeout)
+          ? Math.trunc(opts.timeout * 1000)
+          : priorTimeout && /^\d+$/.test(priorTimeout)
+            ? Math.trunc(parseInt(priorTimeout, 10))
+            : 1800000;
+
+    const daemonEnv: Record<string, string> = {
+      ...daemonEnvBase,
+      MCPLI_TIMEOUT: String(effectiveTimeoutMs),
+      ...(opts.debug === true || priorDebug === '1' ? { MCPLI_DEBUG: '1' } : {}),
+      ...(opts.verbose === true || priorVerbose === '1' ? { MCPLI_VERBOSE: '1' } : {}),
+      ...(opts.quiet === true || priorQuiet === '1' ? { MCPLI_QUIET: '1' } : {}),
     };
 
     // Write current diagnostic configuration to a file for the wrapper to read
