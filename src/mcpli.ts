@@ -146,10 +146,22 @@ function parseArgs(argv: string[]): {
       else if (arg === '--debug') globals.debug = true;
       else if (arg === '--verbose') globals.verbose = true;
       else if (arg.startsWith('--timeout=')) {
-        globals.timeout = parseInt(arg.split('=')[1], 10);
-        globals.timeoutExplicit = true;
+        const v = Number.parseInt(arg.split('=')[1], 10);
+        if (Number.isFinite(v) && v > 0) {
+          globals.timeout = v;
+          globals.timeoutExplicit = true;
+        } else {
+          console.error('Error: --timeout must be a positive integer (seconds)');
+          process.exit(1);
+        }
       } else if (arg.startsWith('--tool-timeout=')) {
-        globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
+        const v = Number.parseInt(arg.split('=')[1], 10);
+        if (Number.isFinite(v) && v > 0) {
+          globals.toolTimeoutSeconds = v;
+        } else {
+          console.error('Error: --tool-timeout must be a positive integer (seconds)');
+          process.exit(1);
+        }
       }
     }
 
@@ -232,10 +244,22 @@ function parseArgs(argv: string[]): {
     else if (arg === '--debug') globals.debug = true;
     else if (arg === '--verbose') globals.verbose = true;
     else if (arg.startsWith('--timeout=')) {
-      globals.timeout = parseInt(arg.split('=')[1], 10);
-      globals.timeoutExplicit = true;
+      const v = Number.parseInt(arg.split('=')[1], 10);
+      if (Number.isFinite(v) && v > 0) {
+        globals.timeout = v;
+        globals.timeoutExplicit = true;
+      } else {
+        console.error('Error: --timeout must be a positive integer (seconds)');
+        process.exit(1);
+      }
     } else if (arg.startsWith('--tool-timeout=')) {
-      globals.toolTimeoutSeconds = parseInt(arg.split('=')[1], 10);
+      const v = Number.parseInt(arg.split('=')[1], 10);
+      if (Number.isFinite(v) && v > 0) {
+        globals.toolTimeoutSeconds = v;
+      } else {
+        console.error('Error: --tool-timeout must be a positive integer (seconds)');
+        process.exit(1);
+      }
     }
   }
 
@@ -791,7 +815,7 @@ async function main(): Promise<void> {
 
       const options = {
         debug: globals.debug,
-        timeout: globals.timeout, // Pass seconds, getDaemonTimeoutMs will be called in commands.ts
+        timeout: globals.timeoutExplicit ? globals.timeout : undefined, // preserve unless explicitly set
         quiet: globals.quiet,
         toolTimeoutMs:
           typeof globals.toolTimeoutSeconds === 'number' && !isNaN(globals.toolTimeoutSeconds)
@@ -886,7 +910,7 @@ async function main(): Promise<void> {
 
         case 'log': {
           // Parse optional --since= window and optional spec after --
-          let since = '5m';
+          let since = '2m';
           const flags: string[] = [];
           for (const a of daemonArgs) {
             if (a.startsWith('--since=')) since = a.split('=')[1] || since;
@@ -904,7 +928,7 @@ async function main(): Promise<void> {
             }
             await (
               await import('./daemon/commands.ts')
-            ).handleDaemonLogShow(spec.command, spec.args, options, since);
+            ).handleDaemonLogShow(spec.command, spec.args, { ...options, env: spec.env }, since);
           } else {
             await (
               await import('./daemon/commands.ts')

@@ -24,12 +24,12 @@ export function parsePositiveIntMs(v: unknown): number | undefined {
  * Enforce a default timeout on MCP client tool calls unless explicitly overridden.
  * Callers can pass a per-call timeout via `options.timeout` to override the default.
  */
-export async function callToolWithDefaultTimeout<R = unknown>(
+export async function callToolWithDefaultTimeout(
   client: Client,
   params: Parameters<Client['callTool']>[0],
   resultSchema?: Parameters<Client['callTool']>[1],
   options?: Parameters<Client['callTool']>[2],
-): Promise<R> {
+): ReturnType<Client['callTool']> {
   const mergedOptions: Parameters<Client['callTool']>[2] = {
     timeout: getDefaultToolTimeoutMs(),
     ...(options ?? {}),
@@ -38,7 +38,7 @@ export async function callToolWithDefaultTimeout<R = unknown>(
     params,
     resultSchema as Parameters<Client['callTool']>[1],
     mergedOptions,
-  ) as unknown as Promise<R>;
+  ) as ReturnType<Client['callTool']>;
 }
 
 // Test-only accessors

@@ -12,7 +12,7 @@ import {
   Orchestrator,
 } from './runtime.ts';
 import { getConfig } from '../config.ts';
-import { parsePositiveIntMs } from './mcp-client-utils.ts';
+import { parsePositiveIntMs, getDefaultToolTimeoutMs } from './mcp-client-utils.ts';
 
 /**
  * Options for interacting with the MCPLI daemon through the orchestrator.
@@ -51,6 +51,26 @@ export class DaemonClient {
   private daemonId?: string;
   private orchestratorPromise: Promise<Orchestrator>;
   private ipcTimeoutMs: number;
+
+  /**
+   * Resolve the effective front-facing tool timeout (milliseconds).
+   * Priority: explicit client option > global/config default.
+   */
+  private resolveEffectiveToolTimeoutMs(): number {
+    const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
+    if (typeof fromFlag === 'number') {
+      return Math.max(1000, fromFlag);
+    }
+    return Math.max(1000, getDefaultToolTimeoutMs());
+  }
+
+  /**
+   * Whether the tool timeout was explicitly provided (vs coming from defaults).
+   */
+  private isToolTimeoutExplicit(): boolean {
+    const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
+    return typeof fromFlag === 'number';
+  }
 
   /**
    * Construct a client for a given MCP server command.
@@ -118,28 +138,9 @@ export class DaemonClient {
     if (this.options.debug) {
       console.time('[DEBUG] orchestrator.ensure');
     }
-    // Determine effective tool timeout (ms) from flag/env/defaults
-    const cfgForTool = getConfig();
-    const effectiveToolTimeoutMs = ((): number => {
-      const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
-      if (fromFlag) return Math.max(1000, fromFlag);
-      const env = this.options.env ?? {};
-      const fromFrontEnv = parsePositiveIntMs(
-        (env as Record<string, unknown>).MCPLI_TOOL_TIMEOUT_MS,
-      );
-      if (fromFrontEnv) return Math.max(1000, fromFrontEnv);
-      const fromCfg = parsePositiveIntMs(cfgForTool.defaultToolTimeoutMs);
-      return Math.max(1000, fromCfg ?? 600_000);
-    })();
-    const toolTimeoutExplicit = (() => {
-      const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
-      if (fromFlag) return true;
-      const env = this.options.env ?? {};
-      const fromFrontEnv = parsePositiveIntMs(
-        (env as Record<string, unknown>).MCPLI_TOOL_TIMEOUT_MS,
-      );
-      return Boolean(fromFrontEnv);
-    })();
+    // Determine effective tool timeout (ms) from flag/defaults
+    const effectiveToolTimeoutMs: number = this.resolveEffectiveToolTimeoutMs();
+    const toolTimeoutExplicit: boolean = this.isToolTimeoutExplicit();
 
     const ensureRes = await orchestrator.ensure(this.command, this.args, {
       cwd,
@@ -160,7 +161,7 @@ export class DaemonClient {
         `[DEBUG] ensure result: action=${ensureRes.updateAction ?? 'unchanged'}, started=${ensureRes.started ? '1' : '0'}, pid=${typeof ensureRes.pid === 'number' ? ensureRes.pid : 'n/a'}`,
       );
       console.debug(
-        `[DEBUG] effective tool timeout: ${effectiveToolTimeoutMs}ms (flag/env/config); IPC base timeout: ${this.ipcTimeoutMs}ms`,
+        `[DEBUG] effective tool timeout: ${effectiveToolTimeoutMs}ms (${this.isToolTimeoutExplicit() ? 'explicit' : 'default'}); IPC base timeout: ${this.ipcTimeoutMs}ms`,
       );
     }
 
