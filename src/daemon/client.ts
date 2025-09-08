@@ -192,7 +192,7 @@ export class DaemonClient {
     // Ensure IPC timeout never undercuts tool timeout. For callTool we always buffer.
     // For listTools, if a tool timeout is provided (via flag/env), also raise IPC to avoid
     // discovery timing out before long-running servers become ready.
-    const timeoutForRequest = (() => {
+    const timeoutForRequest = ((): number => {
       if (method === 'callTool') {
         return Math.max(this.ipcTimeoutMs, toolTimeoutMs + 60_000);
       }
