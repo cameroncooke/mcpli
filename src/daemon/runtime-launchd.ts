@@ -527,6 +527,12 @@ export class LaunchdRuntime extends BaseOrchestrator implements Orchestrator {
     const nodeExec = process.execPath; // absolute path to Node
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
+    // IMPORTANT:
+    // This module is bundled into dist/mcpli.js by tsup. At runtime, __dirname
+    // resolves to the dist/ directory, while the daemon wrapper is emitted at
+    // dist/daemon/wrapper.js. Therefore we intentionally join the 'daemon'
+    // segment here. Using just 'wrapper.js' would point at dist/wrapper.js,
+    // which does not exist.
     const wrapperPath = path.join(__dirname, 'daemon', 'wrapper.js');
 
     // Build environment for wrapper (preserve prior MCPLI_* flags when not explicitly provided)

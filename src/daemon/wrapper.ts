@@ -464,7 +464,7 @@ class MCPLIDaemon {
 
   private startInactivityWatchdog(): void {
     if (this.inactivityWatchdog) {
-      clearInterval(this.inactivityWatchdog as unknown as number);
+      clearInterval(this.inactivityWatchdog);
       this.inactivityWatchdog = null;
     }
     const tickMs = 1000;
@@ -575,7 +575,7 @@ class MCPLIDaemon {
 
     if (this.inactivityWatchdog) {
       try {
-        clearInterval(this.inactivityWatchdog as unknown as number);
+        clearInterval(this.inactivityWatchdog);
       } catch {
         // ignore
       }

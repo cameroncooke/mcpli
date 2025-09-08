@@ -329,6 +329,10 @@ mcpli daemon start --timeout=3600 -- node weather-server.js
 
 The timeout resets every time you make a request to the daemon. Once the timeout period passes without any activity, the daemon gracefully shuts down and cleans up its files.
 
+Note on preserving timeouts:
+- When you do not pass `--timeout`, MCPLI preserves the daemon's existing inactivity timeout across ensures and restarts (avoids unnecessary plist reloads).
+- Passing `--timeout=<seconds>` explicitly overrides the preserved value for that daemon.
+
 #### Tool Timeouts
 
 Control how long a single MCP tool call may run (default: 10 minutes).
