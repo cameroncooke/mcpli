@@ -786,7 +786,7 @@ export async function sendIPCRequest(
   // Connection retry budget to smooth over launchd activation races (ms)
   const retryBudgetDefault = 3000;
   const retryBudgetEnv = Number(process.env.MCPLI_IPC_CONNECT_RETRY_BUDGET_MS ?? '');
-  const connectRetryBudget: number = (() => {
+  const connectRetryBudget: number = ((): number => {
     // Priority: explicit override > env var > default
     if (Number.isFinite(connectRetryBudgetMs) && (connectRetryBudgetMs as number) > 0) {
       return Math.floor(connectRetryBudgetMs as number);
