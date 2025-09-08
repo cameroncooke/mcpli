@@ -2,10 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.2.0]
 
-## [Unreleased]
+### Improvements
+- Fixes issue where tool call timeouts were too aggressive
+- Fixes bug where IPC timeout could be lower than tool timeout
+- Default tool call  timeout is now 10 minutes
+- Pass `--tool-timeout=<seconds>` to extend 
+- Various fixes
+
+## [0.1.3]
 
 ### Added
 - Initial release of MCPLI
