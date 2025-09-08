@@ -61,6 +61,13 @@ export class DaemonClient {
     if (typeof fromFlag === 'number') {
       return Math.max(1000, fromFlag);
     }
+    const env = this.options.env ?? {};
+    const fromFrontEnv = parsePositiveIntMs(
+      (env as unknown as Record<string, unknown>)['MCPLI_TOOL_TIMEOUT_MS'],
+    );
+    if (typeof fromFrontEnv === 'number') {
+      return Math.max(1000, fromFrontEnv);
+    }
     return Math.max(1000, getDefaultToolTimeoutMs());
   }
 
@@ -69,7 +76,12 @@ export class DaemonClient {
    */
   private isToolTimeoutExplicit(): boolean {
     const fromFlag = parsePositiveIntMs(this.options.toolTimeoutMs);
-    return typeof fromFlag === 'number';
+    if (typeof fromFlag === 'number') return true;
+    const env = this.options.env ?? {};
+    const fromFrontEnv = parsePositiveIntMs(
+      (env as unknown as Record<string, unknown>)['MCPLI_TOOL_TIMEOUT_MS'],
+    );
+    return typeof fromFrontEnv === 'number';
   }
 
   /**
