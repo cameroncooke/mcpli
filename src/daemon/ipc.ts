@@ -791,6 +791,7 @@ export async function sendIPCRequest(
   request: IPCRequest,
   timeoutMs = 10000,
   connectRetryBudgetMs?: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const { maxFrameBytes, killThresholdBytes } = getIpcLimits();
 
@@ -854,22 +855,56 @@ export async function sendIPCRequest(
   }
 
   return new Promise((resolve, reject) => {
-    let client: net.Socket;
+    if (signal?.aborted) {
+      reject(new Error('Operation aborted'));
+      return;
+    }
+
+    let client: net.Socket | undefined;
+    let settled = false;
+
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        client?.destroy();
+      } catch {
+        // ignore
+      }
+      reject(new Error('Operation aborted'));
+    };
+
+    const cleanup = (): void => {
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+
     // Establish connection (with short retry budget)
     connectWithRetry(
       socketPath,
       Math.min(connectRetryBudget, Math.max(100, Math.floor(timeoutMs / 4))),
     )
       .then((sock) => {
+        if (settled) return;
         client = sock;
         client.write(JSON.stringify(request) + '\n');
         attachHandlers(client);
       })
-      .catch((err) => reject(err));
+      .catch((err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      });
 
     function attachHandlers(clientSock: net.Socket): void {
       let buffer = '';
       const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         try {
           clientSock.destroy();
         } catch {
@@ -883,12 +918,15 @@ export async function sendIPCRequest(
       }, timeoutMs);
 
       clientSock.on('data', (data) => {
+        if (settled) return;
         buffer += data.toString();
 
         const currentBytes = Buffer.byteLength(buffer, 'utf8');
 
         if (currentBytes > killThresholdBytes) {
           clearTimeout(timeout);
+          settled = true;
+          cleanup();
           try {
             clientSock.destroy();
           } catch {
@@ -907,6 +945,8 @@ export async function sendIPCRequest(
 
         if (currentBytes > maxFrameBytes) {
           clearTimeout(timeout);
+          settled = true;
+          cleanup();
           try {
             clientSock.destroy();
           } catch {
@@ -921,6 +961,8 @@ export async function sendIPCRequest(
         if (newlineIndex !== -1) {
           const message = buffer.slice(0, newlineIndex);
           clearTimeout(timeout);
+          settled = true;
+          cleanup();
           try {
             clientSock.end();
           } catch {

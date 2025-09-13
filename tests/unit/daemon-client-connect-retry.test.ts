@@ -47,14 +47,20 @@ describe('DaemonClient adaptive connect retry budget', () => {
 
     let capturedBudget: number | undefined;
     __capturedBudget = undefined;
-    vi.mock('../../src/daemon/ipc.ts', () => ({
-      generateRequestId: () => 'req-1',
-      // Capture the 4th argument (connectRetryBudgetMs)
-      async sendIPCRequest(_socketPath: string, _request: unknown, _timeoutMs: number, connectRetryBudgetMs?: number) {
-        __capturedBudget = connectRetryBudgetMs;
-        return { ok: true };
-      },
-    }));
+      vi.mock('../../src/daemon/ipc.ts', () => ({
+        generateRequestId: () => 'req-1',
+        // Capture the 4th argument (connectRetryBudgetMs)
+        async sendIPCRequest(
+          _socketPath: string,
+          _request: unknown,
+          _timeoutMs: number,
+          connectRetryBudgetMs?: number,
+          _signal?: AbortSignal,
+        ) {
+          __capturedBudget = connectRetryBudgetMs;
+          return { ok: true };
+        },
+      }));
 
     const { DaemonClient } = await import('../../src/daemon/client.ts');
     const client = new DaemonClient('fake-server', [], {});
@@ -69,13 +75,19 @@ describe('DaemonClient adaptive connect retry budget', () => {
 
     let capturedBudget: number | undefined;
     __capturedBudget = undefined;
-    vi.mock('../../src/daemon/ipc.ts', () => ({
-      generateRequestId: () => 'req-1',
-      async sendIPCRequest(_socketPath: string, _request: unknown, _timeoutMs: number, connectRetryBudgetMs?: number) {
-        __capturedBudget = connectRetryBudgetMs;
-        return { ok: true };
-      },
-    }));
+      vi.mock('../../src/daemon/ipc.ts', () => ({
+        generateRequestId: () => 'req-1',
+        async sendIPCRequest(
+          _socketPath: string,
+          _request: unknown,
+          _timeoutMs: number,
+          connectRetryBudgetMs?: number,
+          _signal?: AbortSignal,
+        ) {
+          __capturedBudget = connectRetryBudgetMs;
+          return { ok: true };
+        },
+      }));
 
     const { DaemonClient } = await import('../../src/daemon/client.ts');
     const client = new DaemonClient('fake-server', [], {});
