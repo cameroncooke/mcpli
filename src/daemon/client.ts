@@ -117,28 +117,15 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Query the MCP server (via daemon) for available tools.
-   *
-   * @returns Tool list result from the daemon.
-   */
-  async listTools(): Promise<ToolListResult> {
-    const result = await this.callDaemon('listTools');
-    return result as ToolListResult;
-  }
-
-  /**
-   * Execute a specific tool over IPC, returning the raw MCP tool result.
-   *
-   * @param params Tool call parameters including name and arguments.
-   * @returns Raw MCP tool call result.
-   */
-  async callTool(params: ToolCallParams): Promise<ToolCallResult> {
-    const result = await this.callDaemon('callTool', params);
-    return result as ToolCallResult;
-  }
-
-  private async callDaemon(method: string, params?: ToolCallParams): Promise<unknown> {
+  private async prepareRequest(
+    method: 'listTools' | 'callTool' | 'ping',
+    params?: ToolCallParams,
+  ): Promise<{
+    socketPath: string;
+    request: { id: string; method: 'listTools' | 'callTool' | 'ping'; params?: ToolCallParams };
+    timeoutForRequest: number;
+    connectRetryBudgetMs?: number;
+  }> {
     const cwd = this.options.cwd ?? process.cwd();
     const orchestrator = await this.orchestratorPromise;
 
@@ -146,13 +133,9 @@ export class DaemonClient {
       throw new Error('No daemon identity available and no server command provided');
     }
 
-    // Ensure launchd job/socket exist. Acts as auto-start for on-demand jobs.
-    if (this.options.debug) {
-      console.time('[DEBUG] orchestrator.ensure');
-    }
-    // Determine effective tool timeout (ms) from flag/defaults
-    const effectiveToolTimeoutMs: number = this.resolveEffectiveToolTimeoutMs();
-    const toolTimeoutExplicit: boolean = this.isToolTimeoutExplicit();
+    if (this.options.debug) console.time('[DEBUG] orchestrator.ensure');
+    const effectiveToolTimeoutMs = this.resolveEffectiveToolTimeoutMs();
+    const toolTimeoutExplicit = this.isToolTimeoutExplicit();
 
     const ensureRes = await orchestrator.ensure(this.command, this.args, {
       cwd,
@@ -160,8 +143,7 @@ export class DaemonClient {
       debug: this.options.debug,
       logs: Boolean(this.options.logs ?? this.options.verbose),
       verbose: this.options.verbose,
-      timeout: this.options.timeout, // Pass seconds, commands.ts will convert to ms
-      // Propagate computed tool timeout to wrapper without affecting identity
+      timeout: this.options.timeout,
       toolTimeoutMs: effectiveToolTimeoutMs,
       preferImmediateStart: Boolean(
         this.options.logs ?? this.options.verbose ?? this.options.debug,
@@ -172,29 +154,14 @@ export class DaemonClient {
       console.debug(
         `[DEBUG] ensure result: action=${ensureRes.updateAction ?? 'unchanged'}, started=${ensureRes.started ? '1' : '0'}, pid=${typeof ensureRes.pid === 'number' ? ensureRes.pid : 'n/a'}`,
       );
-      console.debug(
-        `[DEBUG] effective tool timeout: ${effectiveToolTimeoutMs}ms (${this.isToolTimeoutExplicit() ? 'explicit' : 'default'}); IPC base timeout: ${this.ipcTimeoutMs}ms`,
-      );
     }
 
-    const request = {
-      id: generateRequestId(),
-      method: method as 'listTools' | 'callTool' | 'ping',
-      params,
-    };
+    const reqId = generateRequestId();
+    const request = { id: reqId, method, params } as const;
 
-    // Single IPC request; no preflight ping
-    if (this.options.debug) {
-      console.time('[DEBUG] IPC request');
-    }
-    // Ensure IPC timeout never undercuts tool timeout: add 60s buffer for tool calls
-    const toolTimeoutMs = effectiveToolTimeoutMs;
-    // Ensure IPC timeout never undercuts tool timeout. For callTool we always buffer.
-    // For listTools, if a tool timeout is provided (via flag/env), also raise IPC to avoid
-    // discovery timing out before long-running servers become ready.
-    const timeoutForRequest = ((): number => {
+    const timeoutForRequest: number = ((): number => {
       if (method === 'callTool') {
-        return Math.max(this.ipcTimeoutMs, toolTimeoutMs + 60_000);
+        return Math.max(this.ipcTimeoutMs, effectiveToolTimeoutMs + 60_000);
       }
       if (method === 'listTools' && toolTimeoutExplicit) {
         return Math.max(this.ipcTimeoutMs, effectiveToolTimeoutMs + 60_000);
@@ -202,27 +169,103 @@ export class DaemonClient {
       return this.ipcTimeoutMs;
     })();
 
-    // Heuristic: if the job was just (re)loaded or explicitly started, allow a
-    // larger connect retry budget to ride out launchd socket rebind races.
     const needsExtraConnectBudget =
       ensureRes.updateAction === 'loaded' ||
       ensureRes.updateAction === 'reloaded' ||
       !!ensureRes.started;
     const connectRetryBudgetMs = needsExtraConnectBudget ? 8000 : undefined;
 
-    const result = await sendIPCRequest(
-      ensureRes.socketPath,
+    return {
+      socketPath: ensureRes.socketPath,
       request,
       timeoutForRequest,
       connectRetryBudgetMs,
-    );
-    if (this.options.debug) {
-      console.timeEnd('[DEBUG] IPC request');
-      console.debug(
-        `[DEBUG] IPC timeout used: ${timeoutForRequest}ms; connect retry budget: ${connectRetryBudgetMs ?? 'default'}`,
-      );
+    };
+  }
+
+  private async sendWithOptionalCancel(
+    method: 'listTools' | 'callTool' | 'ping',
+    params?: ToolCallParams,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const { socketPath, request, timeoutForRequest, connectRetryBudgetMs } =
+      await this.prepareRequest(method, params);
+
+    let aborted = false;
+    let removeAbort: (() => void) | undefined;
+    if (signal) {
+      const onAbort = (): void => {
+        aborted = true;
+        void sendIPCRequest(
+          socketPath,
+          {
+            id: generateRequestId(),
+            method: 'cancelCall',
+            params: { ipcRequestId: request.id, reason: String(signal.reason ?? 'aborted') },
+          },
+          2000,
+        ).catch(() => {});
+      };
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        const onAbortListener: (ev: Event) => void = (ev: Event): void => {
+          void ev;
+          onAbort();
+        };
+        signal.addEventListener('abort', onAbortListener, { once: true });
+        removeAbort = (): void => signal.removeEventListener?.('abort', onAbortListener);
+      }
     }
-    return result;
+
+    try {
+      const result = await sendIPCRequest(
+        socketPath,
+        request,
+        timeoutForRequest,
+        connectRetryBudgetMs,
+      );
+      if (aborted) throw new Error('Operation aborted');
+      return result;
+    } finally {
+      removeAbort?.();
+    }
+  }
+
+  /**
+   * Query the MCP server (via daemon) for available tools.
+   *
+   * @returns Tool list result from the daemon.
+   */
+  async listTools(): Promise<ToolListResult> {
+    const result = await this.sendWithOptionalCancel('listTools');
+    return result as ToolListResult;
+  }
+
+  /**
+   * Execute a specific tool over IPC, returning the raw MCP tool result.
+   *
+   * @param params Tool call parameters including name and arguments.
+   * @returns Raw MCP tool call result.
+   */
+  async callTool(
+    params: ToolCallParams,
+    options?: { signal?: AbortSignal },
+  ): Promise<ToolCallResult> {
+    const result = await this.sendWithOptionalCancel('callTool', params, options?.signal);
+    return result as ToolCallResult;
+  }
+
+  /**
+   * Initiate a cancellable tool call. Returns the IPC request id and socket path
+   * so callers can send a `cancelCall` IPC request on Ctrl+C, plus a cancel helper.
+   */
+
+  private async callDaemon(
+    method: 'listTools' | 'callTool' | 'ping',
+    params?: ToolCallParams,
+  ): Promise<unknown> {
+    return await this.sendWithOptionalCancel(method, params);
   }
 
   /**

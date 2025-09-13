@@ -64,9 +64,9 @@ export interface IPCRequest {
   /** Unique request id for correlation. */
   id: string;
   /** Method name indicating operation. */
-  method: 'listTools' | 'callTool' | 'ping';
+  method: 'listTools' | 'callTool' | 'ping' | 'cancelCall';
   /** Optional method params. */
-  params?: ToolCallParams | undefined;
+  params?: ToolCallParams | CancelCallParams | undefined;
 }
 
 /**
@@ -79,6 +79,17 @@ export interface IPCResponse {
   result?: unknown;
   /** Error message if the request failed. */
   error?: string;
+}
+
+/**
+ * Parameters for cancelling an in-flight callTool request over IPC.
+ * The ipcRequestId must match the `IPCRequest.id` that initiated the callTool.
+ */
+export interface CancelCallParams {
+  /** The IPC request id of the in-flight callTool to cancel. */
+  ipcRequestId: string;
+  /** Optional human-readable reason. */
+  reason?: string;
 }
 
 /**
