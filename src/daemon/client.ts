@@ -199,11 +199,9 @@ export class DaemonClient {
       throw new Error('Operation aborted');
     }
 
-    let aborted = false;
     let removeAbort: (() => void) | undefined;
     if (signal) {
       const onAbort = (): void => {
-        aborted = true;
         void sendIPCRequest(
           socketPath,
           {
@@ -223,14 +221,18 @@ export class DaemonClient {
     }
 
     try {
-      const result = await sendIPCRequest(
+      return await sendIPCRequest(
         socketPath,
         request,
         timeoutForRequest,
         connectRetryBudgetMs,
+        signal,
       );
-      if (aborted) throw new Error('Operation aborted');
-      return result;
+    } catch (err) {
+      if (signal?.aborted) {
+        throw new Error('Operation aborted');
+      }
+      throw err;
     } finally {
       removeAbort?.();
     }

@@ -25,14 +25,20 @@ vi.mock('../../src/daemon/runtime.ts', () => {
 vi.mock('../../src/daemon/ipc.ts', () => {
   let lastTimeout = -1;
   return {
-    generateRequestId: () => 'req-1',
-    async sendIPCRequest(_socketPath: string, _request: unknown, timeoutMs: number) {
-      lastTimeout = timeoutMs;
-      return { ok: true };
-    },
-    __getLastTimeout: () => lastTimeout,
-  };
-});
+      generateRequestId: () => 'req-1',
+      async sendIPCRequest(
+        _socketPath: string,
+        _request: unknown,
+        timeoutMs: number,
+        _connectRetryBudgetMs?: number,
+        _signal?: AbortSignal,
+      ) {
+        lastTimeout = timeoutMs;
+        return { ok: true };
+      },
+      __getLastTimeout: () => lastTimeout,
+    };
+  });
 
 describe('DaemonClient IPC timeout hierarchy', () => {
   beforeEach(() => {
