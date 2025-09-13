@@ -47,6 +47,7 @@ class MCPLIDaemon {
 
   private isShuttingDown = false;
   private allowShutdown = false;
+  private activeCalls: Map<string, AbortController> = new Map();
 
   private mcpCommand: string;
   private mcpArgs: string[];
@@ -404,15 +405,57 @@ class MCPLIDaemon {
             }
           }
 
-          result = await callToolWithDefaultTimeout(
-            this.mcpClient,
-            {
-              name,
-              arguments: args as Record<string, unknown> | undefined,
-            },
-            undefined,
-            { timeout: defaultTimeoutMs },
-          );
+          // Track this call with an AbortController so we can cancel on demand via IPC
+          const ac = new AbortController();
+          this.activeCalls.set(request.id, ac);
+          try {
+            result = await callToolWithDefaultTimeout(
+              this.mcpClient,
+              {
+                name,
+                arguments: args as Record<string, unknown> | undefined,
+              },
+              undefined,
+              { timeout: defaultTimeoutMs, signal: ac.signal },
+            );
+          } finally {
+            this.activeCalls.delete(request.id);
+          }
+          break;
+        }
+
+        case 'cancelCall': {
+          const p = request.params as unknown;
+          const ipcRequestId = (p as { ipcRequestId?: unknown })?.ipcRequestId;
+          const reason = (p as { reason?: unknown })?.reason;
+          if (typeof ipcRequestId !== 'string' || ipcRequestId.trim() === '') {
+            throw new Error('Invalid cancelCall params: "ipcRequestId" must be a non-empty string');
+          }
+          const controller = this.activeCalls.get(ipcRequestId);
+          if (controller) {
+            if (this.debug) {
+              console.log(
+                `[DAEMON] Received cancel for ${ipcRequestId}${reason ? `: ${String(reason)}` : ''}`,
+              );
+            }
+            try {
+              osLog(
+                `[MCPLI:${this.daemonId}] Cancel requested for ${ipcRequestId}${
+                  reason ? `: ${String(reason)}` : ''
+                }`,
+              );
+            } catch {
+              // ignore
+            }
+            try {
+              controller.abort(reason ?? 'Cancelled by client');
+            } catch {
+              // ignore
+            }
+            result = { status: 'ok' };
+          } else {
+            result = { status: 'not-found' };
+          }
           break;
         }
 

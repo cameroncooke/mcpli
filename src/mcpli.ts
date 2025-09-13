@@ -631,9 +631,9 @@ function spawnLiveLogFollower(cwd: string): { stop: () => void } {
   };
 
   process.once('exit', stop);
+  // Do not exit the process here on SIGINT; allow the main flow to handle Ctrl+C
   process.once('SIGINT', () => {
     stop();
-    process.exit(130);
   });
   process.once('SIGTERM', () => {
     stop();
@@ -1087,12 +1087,33 @@ async function main(): Promise<void> {
     if (globals.verbose) {
       logFollower = spawnLiveLogFollower(process.cwd());
     }
+    // Initiate tool execution with AbortSignal; cancel on Ctrl+C
+    const ac = new AbortController();
+    let exiting = false;
+    const onSigint = (): void => {
+      if (exiting) return;
+      exiting = true;
+      try {
+        if (logFollower) logFollower.stop();
+        ac.abort(new Error('SIGINT'));
+      } finally {
+        setTimeout(() => {
+          console.error('Cancelled.');
+          process.exit(130);
+        }, 200);
+      }
+    };
+    process.once('SIGINT', onSigint);
+
     let executionResult: ToolCallResult;
     try {
-      executionResult = await daemonClient.callTool({
-        name: selectedTool.name,
-        arguments: params,
-      });
+      executionResult = await daemonClient.callTool(
+        {
+          name: selectedTool.name,
+          arguments: params,
+        },
+        { signal: ac.signal },
+      );
     } finally {
       if (logFollower) {
         logFollower.stop();
