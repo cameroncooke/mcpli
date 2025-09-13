@@ -188,8 +188,16 @@ export class DaemonClient {
     params?: ToolCallParams,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    if (signal?.aborted) {
+      throw new Error('Operation aborted');
+    }
+
     const { socketPath, request, timeoutForRequest, connectRetryBudgetMs } =
       await this.prepareRequest(method, params);
+
+    if (signal?.aborted) {
+      throw new Error('Operation aborted');
+    }
 
     let aborted = false;
     let removeAbort: (() => void) | undefined;
@@ -206,16 +214,12 @@ export class DaemonClient {
           2000,
         ).catch(() => {});
       };
-      if (signal.aborted) {
+      const onAbortListener: (ev: Event) => void = (ev: Event): void => {
+        void ev;
         onAbort();
-      } else {
-        const onAbortListener: (ev: Event) => void = (ev: Event): void => {
-          void ev;
-          onAbort();
-        };
-        signal.addEventListener('abort', onAbortListener, { once: true });
-        removeAbort = (): void => signal.removeEventListener?.('abort', onAbortListener);
-      }
+      };
+      signal.addEventListener('abort', onAbortListener, { once: true });
+      removeAbort = (): void => signal.removeEventListener?.('abort', onAbortListener);
     }
 
     try {
