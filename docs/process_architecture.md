@@ -158,6 +158,21 @@ The client implements a streamlined daemon lifecycle management system:
    buffers above the effective tool timeout (tool + 60s) to ensure the transport timeout never
    undercuts the tool timeout.
 
+### Cancellation Path
+
+MCPLI supports request‑scoped cancellation end‑to‑end:
+
+1. User presses Ctrl+C in mcpli.
+2. The CLI aborts an `AbortController` associated with the in‑flight request and exits with code 130 after a short delay.
+3. DaemonClient sends a protocol‑level cancellation to the daemon by issuing an IPC `cancelCall` for the original request id.
+4. The daemon wrapper maps that request id to a per‑request `AbortController` and aborts it; no daemon shutdown occurs.
+5. The MCP server SDK receives `extra.signal` in the tool handler; when aborted, the tool can stop promptly.
+6. Server tool implementations that spawn child processes (e.g., xcodebuild) can honor cancellation by sending OS signals to the child process group (SIGINT, then SIGTERM). Tools that ignore signals may continue to run; this is by design.
+
+Notes:
+- Cancellation is request‑local and does not affect daemon lifetime or other requests.
+- The daemon continues to run per inactivity timeout policy.
+
 ### Daemon Wrapper (`src/daemon/wrapper.ts`)
 
 The daemon wrapper runs as the long-lived daemon process and manages the MCP server connection.
