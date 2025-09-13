@@ -42,6 +42,8 @@ vi.mock('../../src/daemon/ipc.ts', () => {
 
 describe('DaemonClient IPC timeout hierarchy', () => {
   beforeEach(() => {
+    // Reset module registry before setting env to ensure fresh imports
+    vi.resetModules();
     process.env = { ...envSnapshot };
     // Simulate misconfiguration: IPC < tool timeout
     process.env.MCPLI_IPC_TIMEOUT = '300000'; // 5 minutes

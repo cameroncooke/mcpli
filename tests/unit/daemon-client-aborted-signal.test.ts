@@ -31,6 +31,8 @@ vi.mock('../../src/daemon/ipc.ts', () => ({
 
 describe('DaemonClient already-aborted signal', () => {
   beforeEach(() => {
+    // Ensure a clean module registry so env and mocks apply fresh per test
+    vi.resetModules();
     process.env = { ...envSnapshot };
     sendIPCRequestMock.mockClear();
   });

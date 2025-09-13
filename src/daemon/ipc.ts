@@ -887,7 +887,14 @@ export async function sendIPCRequest(
       Math.min(connectRetryBudget, Math.max(100, Math.floor(timeoutMs / 4))),
     )
       .then((sock) => {
-        if (settled) return;
+        if (settled) {
+          try {
+            sock.destroy();
+          } catch {
+            // ignore
+          }
+          return;
+        }
         client = sock;
         client.write(JSON.stringify(request) + '\n');
         attachHandlers(client);
