@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0]
+
+### Improvements
+- Adds SIGINT handling, by way of passing notification/cancellation to MCP server.
+
 ## [0.2.0]
 
 ### Improvements
 - Fixes issue where tool call timeouts were too aggressive
 - Fixes bug where IPC timeout could be lower than tool timeout
 - Default tool call  timeout is now 10 minutes
-- Pass `--tool-timeout=<seconds>` to extend 
+- Pass `--tool-timeout=<seconds>` to extend
 - Various fixes
 
 ## [0.1.3]
