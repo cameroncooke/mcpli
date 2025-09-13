@@ -61,6 +61,7 @@ mcpli get-weather --location "San Francisco" -- node weather-server.js
 - Auto‑generated help – `mcpli --help -- <server>` lists tools; `mcpli <tool> --help -- <server>` shows parameters
 - Clean output – Structured JSON that’s great for shell pipelines
 - Flexible parameters – Supports `--key value` and `--key=value`, plus JSON for arrays/objects
+ - Cancellation – Ctrl+C cancels the active tool request; the daemon remains running
 
 
 ## Why MCPLI?

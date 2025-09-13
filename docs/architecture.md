@@ -66,6 +66,7 @@ The client implements a streamlined daemon lifecycle management system:
 4. **preferImmediateStart=false**: The client requests ensure() with preferImmediateStart=false to avoid kickstarting on every request, eliminating the previous 10+ second delays caused by restarts.
 5. **Adaptive Connect Retry Budget**: When `orchestrator.ensure()` indicates the job was just `loaded` or `reloaded` (or explicitly `started`), the client temporarily increases the IPC connect retry budget to ~8 seconds. This smooths over the brief socket rebind window under launchd after a plist update, preventing transient `ECONNREFUSED`. In steady-state (no update), a short default budget (~3s) is used.
 6. **IPC Timeout Auto‑Buffering**: For tool calls, IPC timeout is automatically set to at least `(tool timeout + 60s)` to ensure the transport timeout never undercuts tool execution timeout.
+7. **Request Cancellation**: Tool calls support cancellation via `AbortSignal`. On abort, the client issues a protocol‑level cancel for the matching request id; the daemon aborts that request while remaining online.
 
 ### Daemon Wrapper (`src/daemon/wrapper.ts`)
 
@@ -182,6 +183,7 @@ The IPC protocol uses newline-delimited JSON over Unix domain sockets:
 **Processing Flow Notes:**
 - No preflight ping is performed; a single request/response connection is used.
 - The client does not kickstart the job; launchd activation on connect is relied upon.
+- Cancellation is request‑scoped. The client sends `cancelCall` for the request id; the daemon aborts the matching request without affecting other requests or the daemon lifecycle.
 
 ## Configuration System
 
