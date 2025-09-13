@@ -23,6 +23,10 @@ import { isUnsafeKey, safeEmptyRecord, safeDefine, deepSanitize } from './utils/
 import path from 'path';
 import { spawn } from 'child_process';
 
+// Track whether Ctrl+C (SIGINT) triggered cancellation so the outer
+// catch can avoid logging/exit(1) and let the scheduled exit(130) run.
+let abortedBySigint = false;
+
 /**
  * Global CLI flags that shape daemon behavior and output.
  */
@@ -1095,6 +1099,7 @@ async function main(): Promise<void> {
       exiting = true;
       try {
         if (logFollower) logFollower.stop();
+        abortedBySigint = true;
         ac.abort(new Error('SIGINT'));
       } finally {
         setTimeout(() => {
@@ -1145,6 +1150,10 @@ async function main(): Promise<void> {
       }
     }
   } catch (error) {
+    if (abortedBySigint) {
+      // Allow the SIGINT-scheduled exit(130) to occur without extra noise.
+      return;
+    }
     console.error(`Error: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
   }
