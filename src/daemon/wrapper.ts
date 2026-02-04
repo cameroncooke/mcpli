@@ -355,7 +355,12 @@ class MCPLIDaemon {
   }
 
   async handleIPCRequest(request: IPCRequest): Promise<unknown> {
-    this.resetInactivityTimer();
+    // Only reset inactivity timer for actual work, not for control messages.
+    // This prevents cancelCall and ping from indefinitely keeping the daemon alive.
+    const isWorkRequest = request.method === 'listTools' || request.method === 'callTool';
+    if (isWorkRequest) {
+      this.resetInactivityTimer();
+    }
     try {
       osLog(`[MCPLI:${this.daemonId}] IPC request: ${request.method}`);
     } catch {
