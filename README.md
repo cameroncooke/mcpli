@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/cameroncooke-mcpli-badge.png)](https://mseep.ai/app/cameroncooke-mcpli)
+
 ![MCPLI Logo](banner.png)
 
 [![CI](https://github.com/cameroncooke/mcpli/actions/workflows/ci.yml/badge.svg)](https://github.com/cameroncooke/mcpli/actions/workflows/ci.yml)
